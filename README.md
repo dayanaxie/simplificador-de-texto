@@ -52,3 +52,13 @@ Todos los comandos deben ejecutarse desde la carpeta `frontend/`.
 | `npm run dev`     | Inicia el servidor de desarrollo de Vite (hot reload).                     |
 | `npm run build`   | Empaqueta y optimiza todo el código del frontend para producción           |
 ---
+
+## Autores
+| Nombre  | Carné | Github |
+|------|--------|--------|
+| Roberto Garita Mata | 2018319703 | [@robertogarita](https://github.com/robertogarita) |
+| Alisson Carrillo Selva | 2021032663 | [@alisson77](https://github.com/alisson77) |
+| Emily Sánchez Orozco | 2021067314 | [@emilysan23](https://github.com/emilysan23) |
+| Dayana Xie Li | 2022097967 | [@dayanaxie](https://github.com/dayanaxie) |
+
+
