@@ -2,7 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 
 const navItems = [
-  { label: "Panel de simplificación", path: "/panel" },
+  { label: "Panel de simplificación", path: "/simplify"},
   { label: "Iniciar sesión", path: "/" },
 ];
 
