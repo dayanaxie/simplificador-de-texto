@@ -7,8 +7,12 @@ import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
 import Registro from "./pages/Registro";
 import SimpleTextSinRegistrar from "./pages/SimpleText-sinRegistrar";
+import SimpleText from "./pages/SimpleText";
+import ForgotPassword from "./pages/forgotPassword";
+import ChangePassword from "./pages/changePassword";
 
 import RegistrarLayout from "./layout/RegistrarLayout";
+import RegistradoLayout from "./layout/RegistradoLayout";
 
 const App = () => (
   <BrowserRouter>
@@ -17,15 +21,18 @@ const App = () => (
        {/* Pantallas con NavbarUnregister */}
         <Route element={<RegistrarLayout />}>
           <Route path="/" element={<Login />} />
-          {/* <Route path="/panel" element={<Placeholder title="Panel de simplificación" />} /> */}
-          <Route path="/forgot-password" element={<Placeholder title="Recuperar contraseña" />} />
+          <Route path="/forgotPassword" element={<ForgotPassword />} />
           <Route path="/simplify" element={<SimpleTextSinRegistrar/>} />
+          <Route path="/changePassword" element={<ChangePassword />} />
           <Route path="*" element={<NotFound />} />
           <Route path="/register" element={<Registro />} />
 
         </Route>
 
         {/* Pantallas con NavbarRegister */}
+        <Route element={<RegistradoLayout />}>
+          <Route path="/simplifyText" element={<SimpleText/>} />
+        </Route>
 
       </Routes>
       

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 const EyeOffIcon = () => (
   <svg
@@ -56,6 +57,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const navigate = useNavigate();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,7 +124,7 @@ export default function Login() {
             {/* Forgot password */}
             <div className="-mt-2">
               <Link
-                to="/forgot-password"
+                to="/forgotPassword"
                 className="font-inter font-medium text-base text-[#002855] hover:underline"
               >
                 Olvidé mi contraseña
@@ -132,7 +134,8 @@ export default function Login() {
 
           {/* Submit button */}
           <button
-            type="submit"
+            type="button"
+            onClick={() => {navigate("/simplifyText")}}
             className="mt-8 w-[230px] h-[41px] bg-[#002855] text-white font-lexend font-semibold text-xl leading-[150%] text-center flex items-center justify-center hover:bg-[#002855]/90 transition-colors"
           >
             Iniciar Sesión
