@@ -10,6 +10,7 @@ import SimpleTextSinRegistrar from "./pages/SimpleText-sinRegistrar";
 import SimpleText from "./pages/SimpleText";
 import ForgotPassword from "./pages/forgotPassword";
 import ChangePassword from "./pages/changePassword";
+import AdminPanel from "./pages/admin/AdminPanel";
 
 import RegistrarLayout from "./layout/RegistrarLayout";
 import RegistradoLayout from "./layout/RegistradoLayout";
@@ -26,6 +27,7 @@ const App = () => (
           <Route path="/changePassword" element={<ChangePassword />} />
           <Route path="*" element={<NotFound />} />
           <Route path="/register" element={<Registro />} />
+          <Route path="/admin" element={<AdminPanel />} />
 
         </Route>
 
