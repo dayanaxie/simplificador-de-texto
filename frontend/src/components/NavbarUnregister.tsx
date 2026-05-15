@@ -19,8 +19,8 @@ export default function NavbarUnregister() {
               key={item.path}
               to={item.path}
               className={cn(
-                "relative flex flex-col items-center justify-end h-[46px] px-4 font-roboto font-medium text-white text-sm sm:text-xl transition-colors shrink-0",
-                isActive ? "text-white" : "text-white/80 hover:text-white"
+                "relative flex flex-col items-center justify-end h-[46px] px-4 font-roboto font-medium text-white text-sm sm:text-xl shrink-0",
+                isActive ? "text-white" : "text-white"
               )}
             >
               <span className="pb-[14px]">{item.label}</span>

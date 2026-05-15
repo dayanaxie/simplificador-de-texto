@@ -14,6 +14,7 @@ import AdminPanel from "./pages/admin/AdminPanel";
 
 import RegistrarLayout from "./layout/RegistrarLayout";
 import RegistradoLayout from "./layout/RegistradoLayout";
+import Perfil from "./pages/Perfil";
 
 const App = () => (
   <BrowserRouter>
@@ -34,6 +35,7 @@ const App = () => (
         {/* Pantallas con NavbarRegister */}
         <Route element={<RegistradoLayout />}>
           <Route path="/simplifyText" element={<SimpleText/>} />
+          <Route path="/profile" element={<Perfil/>} />
         </Route>
 
       </Routes>
