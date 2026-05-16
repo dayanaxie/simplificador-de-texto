@@ -19,10 +19,18 @@ const configDefecto: Config = {
   modoRegistro:      "Abierto",
 };
 
+const btnAzul =
+  "inline-flex items-center justify-center min-h-[44px] px-6 " +
+  "bg-[hsl(var(--navy))] text-[hsl(var(--navy-foreground))] " +
+  "text-sm font-medium rounded-md hover:opacity-90 " +
+  "focus-visible:outline-none focus-visible:ring-2 " +
+  "focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 " +
+  "transition-opacity duration-150";
+
 const Configuracion = () => {
-  const [config, setConfig]   = useState<Config>(configDefecto);
-  const [errores, setErrores] = useState<Partial<Record<keyof Config, string>>>({});
-  const [mensaje, setMensaje] = useState("");
+  const [config, setConfig]         = useState<Config>(configDefecto);
+  const [errores, setErrores]       = useState<Partial<Record<keyof Config, string>>>({});
+  const [mensaje, setMensaje]       = useState("");
   const [hayCambios, setHayCambios] = useState(false);
 
   const anunciar = (texto: string) => {
@@ -57,7 +65,6 @@ const Configuracion = () => {
   };
 
   const restaurar = () => {
-    if (!window.confirm("¿Restaurar todos los valores por defecto?")) return;
     setConfig(configDefecto);
     setErrores({});
     setHayCambios(false);
@@ -65,14 +72,13 @@ const Configuracion = () => {
   };
 
   const inputClass = (campo: keyof Config) =>
-    "w-full px-4 py-2 border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 " +
+    "w-full px-4 min-h-[44px] border rounded-md text-sm bg-background text-foreground " +
+    "focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " +
     (errores[campo] ? "border-destructive" : "border-border");
 
   return (
     <div>
-      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {mensaje}
-      </div>
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{mensaje}</div>
 
       <h2 className="text-2xl font-bold text-center text-foreground mb-8">
         Configuración General del Sistema
@@ -80,87 +86,63 @@ const Configuracion = () => {
 
       <div className="max-w-lg mx-auto space-y-5">
 
-        {/* Nombre de la plataforma */}
         <div>
           <label htmlFor="cfg-nombre" className="block text-sm font-medium text-foreground mb-1">
-            Nombre de la plataforma
+            Nombre de la plataforma <span aria-hidden="true" className="text-destructive">*</span>
+            <span className="sr-only">(obligatorio)</span>
           </label>
-          <input
-            id="cfg-nombre"
-            type="text"
-            value={config.nombrePlataforma}
+          <input id="cfg-nombre" type="text" value={config.nombrePlataforma}
             onChange={(e) => set("nombrePlataforma", e.target.value)}
             placeholder="Ingrese el nombre de la plataforma"
             aria-required="true"
             aria-invalid={errores.nombrePlataforma ? true : undefined}
-            aria-describedby={errores.nombrePlataforma ? "err-nombre" : undefined}
-            className={inputClass("nombrePlataforma")}
-          />
+            aria-describedby={errores.nombrePlataforma ? "err-cfg-nombre" : undefined}
+            className={inputClass("nombrePlataforma")} />
           {errores.nombrePlataforma && (
-            <p id="err-nombre" role="alert" className="mt-1 text-xs text-destructive">
-              {errores.nombrePlataforma}
-            </p>
+            <p id="err-cfg-nombre" role="alert" className="mt-1 text-xs text-destructive">{errores.nombrePlataforma}</p>
           )}
         </div>
 
-        {/* Límite de palabras */}
         <div>
           <label htmlFor="cfg-limite" className="block text-sm font-medium text-foreground mb-1">
-            Límite de palabras
+            Límite de palabras <span aria-hidden="true" className="text-destructive">*</span>
+            <span className="sr-only">(obligatorio)</span>
           </label>
-          <input
-            id="cfg-limite"
-            type="text"
-            inputMode="numeric"
-            value={config.limitePalabras}
+          <input id="cfg-limite" type="text" inputMode="numeric" value={config.limitePalabras}
             onChange={(e) => set("limitePalabras", e.target.value)}
             placeholder="Ingrese la cantidad de palabras"
             aria-required="true"
             aria-invalid={errores.limitePalabras ? true : undefined}
-            aria-describedby={errores.limitePalabras ? "err-limite" : undefined}
-            className={inputClass("limitePalabras")}
-          />
+            aria-describedby={errores.limitePalabras ? "err-cfg-limite" : "cfg-limite-hint"}
+            className={inputClass("limitePalabras")} />
+          <p id="cfg-limite-hint" className="mt-1 text-xs text-muted-foreground">Mínimo 50 palabras.</p>
           {errores.limitePalabras && (
-            <p id="err-limite" role="alert" className="mt-1 text-xs text-destructive">
-              {errores.limitePalabras}
-            </p>
+            <p id="err-cfg-limite" role="alert" className="mt-1 text-xs text-destructive">{errores.limitePalabras}</p>
           )}
         </div>
 
-        {/* Mensaje de bienvenida */}
         <div>
           <label htmlFor="cfg-bienvenida" className="block text-sm font-medium text-foreground mb-1">
-            Mensaje de bienvenida
+            Mensaje de bienvenida <span aria-hidden="true" className="text-destructive">*</span>
+            <span className="sr-only">(obligatorio)</span>
           </label>
-          <input
-            id="cfg-bienvenida"
-            type="text"
-            value={config.mensajeBienvenida}
+          <input id="cfg-bienvenida" type="text" value={config.mensajeBienvenida}
             onChange={(e) => set("mensajeBienvenida", e.target.value)}
             placeholder="Ingrese el mensaje de bienvenida"
             aria-required="true"
             aria-invalid={errores.mensajeBienvenida ? true : undefined}
-            aria-describedby={errores.mensajeBienvenida ? "err-bienvenida" : undefined}
-            className={inputClass("mensajeBienvenida")}
-          />
+            aria-describedby={errores.mensajeBienvenida ? "err-cfg-bienvenida" : undefined}
+            className={inputClass("mensajeBienvenida")} />
           {errores.mensajeBienvenida && (
-            <p id="err-bienvenida" role="alert" className="mt-1 text-xs text-destructive">
-              {errores.mensajeBienvenida}
-            </p>
+            <p id="err-cfg-bienvenida" role="alert" className="mt-1 text-xs text-destructive">{errores.mensajeBienvenida}</p>
           )}
         </div>
 
-        {/* Estado del sistema */}
         <div>
-          <label htmlFor="cfg-estado" className="block text-sm font-medium text-foreground mb-1">
-            Estado del sistema
-          </label>
-          <select
-            id="cfg-estado"
-            value={config.estadoSistema}
+          <label htmlFor="cfg-estado" className="block text-sm font-medium text-foreground mb-1">Estado del sistema</label>
+          <select id="cfg-estado" value={config.estadoSistema}
             onChange={(e) => set("estadoSistema", e.target.value as EstadoSistema)}
-            className="w-full px-4 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
-          >
+            className="w-full px-4 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1">
             <option value="Activo">Activo</option>
             <option value="Mantenimiento">Mantenimiento</option>
           </select>
@@ -171,34 +153,22 @@ const Configuracion = () => {
           )}
         </div>
 
-        {/* Modo de registro */}
         <div>
-          <label htmlFor="cfg-registro" className="block text-sm font-medium text-foreground mb-1">
-            Modo de registro
-          </label>
-          <select
-            id="cfg-registro"
-            value={config.modoRegistro}
+          <label htmlFor="cfg-registro" className="block text-sm font-medium text-foreground mb-1">Modo de registro</label>
+          <select id="cfg-registro" value={config.modoRegistro}
             onChange={(e) => set("modoRegistro", e.target.value as ModoRegistro)}
-            className="w-full px-4 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
-          >
+            className="w-full px-4 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1">
             <option value="Abierto">Abierto</option>
             <option value="Con aprobación">Con aprobación</option>
           </select>
         </div>
 
-        {/* Botones */}
         <div className="flex gap-4 pt-2">
-          <button
-            onClick={guardar}
-            className="px-6 py-2 bg-navy text-navy-foreground text-sm font-medium rounded-md hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
+          <button onClick={guardar} disabled={!hayCambios}
+            className={btnAzul + (!hayCambios ? " opacity-40 cursor-not-allowed" : "")}>
             Guardar Cambios
           </button>
-          <button
-            onClick={restaurar}
-            className="px-6 py-2 bg-navy text-navy-foreground text-sm font-medium rounded-md hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
+          <button onClick={restaurar} className={btnAzul}>
             Restaurar valores por defecto
           </button>
         </div>

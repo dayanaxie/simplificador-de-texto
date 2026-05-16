@@ -5,6 +5,8 @@ import Configuracion from "./sections/Configuracion";
 import Metricas from "./sections/Metricas";
 import Glosario from "./sections/Glosario";
 import Auditoria from "./sections/Auditoria";
+import Solicitudes from "./sections/Solicitudes";
+import Reportes from "./sections/Reportes";       
 
 type SeccionAdmin =
   | "usuarios"
@@ -44,8 +46,8 @@ const AdminPanel = () => {
       case "metricas":      return <Metricas />;
       case "glosario":      return <Glosario />;
       case "auditoria":     return <Auditoria />;
-      case "reportes":      return <SeccionPendiente titulo="Reportes" />;
-      case "solicitudes":   return <SeccionPendiente titulo="Solicitudes" />;
+      case "reportes":      return <Reportes />;
+      case "solicitudes":   return <Solicitudes />;
     }
   };
 
