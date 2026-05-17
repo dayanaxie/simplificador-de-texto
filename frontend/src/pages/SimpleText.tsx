@@ -27,6 +27,10 @@ export default function Index() {
   const [simplifiedText, setSimplifiedText] = useState("");
   const [isSimplifying, setIsSimplifying] = useState(false);
 
+  // Estados para el modal de reporte
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportDescription, setReportDescription] = useState("");
+
   const wordCount = countWords(inputText);
   const isOverLimit = wordCount > WORD_LIMIT;
 
@@ -41,21 +45,52 @@ export default function Index() {
 
   const handleSimplify = useCallback(() => {
     if (!inputText.trim() || isOverLimit) return;
+
     setIsSimplifying(true);
+
     setTimeout(() => {
       setSimplifiedText(inputText);
       setIsSimplifying(false);
     }, 800);
   }, [inputText, isOverLimit]);
 
+  const handleOpenReportModal = useCallback(() => {
+    if (!simplifiedText.trim()) return;
+    setIsReportModalOpen(true);
+  }, [simplifiedText]);
+
+  const handleCancelReport = useCallback(() => {
+    setIsReportModalOpen(false);
+    setReportDescription("");
+  }, []);
+
+  const handleSendReport = useCallback(() => {
+    if (!reportDescription.trim()) return;
+
+    const reportData = {
+      originalText: inputText,
+      simplifiedText,
+      description: reportDescription,
+      createdAt: new Date().toISOString(),
+    };
+
+    console.log("Reporte enviado:", reportData);
+
+    setIsReportModalOpen(false);
+    setReportDescription("");
+  }, [inputText, simplifiedText, reportDescription]);
+
   const handleExport = useCallback(() => {
     if (!simplifiedText) return;
+
     const blob = new Blob([simplifiedText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
+
     a.href = url;
     a.download = "texto-simplificado.txt";
     a.click();
+
     URL.revokeObjectURL(url);
   }, [simplifiedText]);
 
@@ -66,11 +101,9 @@ export default function Index() {
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex flex-col">
-      
       {/* Main content */}
       <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-8 lg:px-[52px] py-6 sm:py-8 lg:py-[30px]">
         <div className="bg-white border border-[#E0E0E0] w-full p-5 sm:p-8 lg:p-10 flex flex-col gap-6 sm:gap-8">
-
           {/* Text Simplifier Section */}
           <section className="flex flex-col gap-5 sm:gap-6">
             <h1 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
@@ -82,6 +115,7 @@ export default function Index() {
               <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
                 Ingrese un texto menor a {WORD_LIMIT} palabras
               </label>
+
               <textarea
                 className="w-full min-h-[90px] sm:min-h-[100px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
                 placeholder="Ingrese el texto original"
@@ -98,6 +132,7 @@ export default function Index() {
                 >
                   {wordCount}/{WORD_LIMIT} palabras
                 </span>
+
                 <div className="flex gap-3 justify-end">
                   <button
                     onClick={handlePaste}
@@ -105,6 +140,7 @@ export default function Index() {
                   >
                     Pegar
                   </button>
+
                   <button
                     onClick={handleSimplify}
                     disabled={!inputText.trim() || isOverLimit || isSimplifying}
@@ -128,15 +164,26 @@ export default function Index() {
               <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
                 Texto simplificado
               </label>
+
               <div className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%]">
                 {simplifiedText || (
-                  <span className="text-[#1E1E1E]/40">Texto simplificado</span>
+                  <span className="text-[#1E1E1E]/40">
+                    Texto simplificado
+                  </span>
                 )}
               </div>
             </div>
 
-            {/* Export / New simplification buttons */}
+            {/* Report / Export / New simplification buttons */}
             <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                onClick={handleOpenReportModal}
+                disabled={!simplifiedText}
+                className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                Reportar resultado
+              </button>
+
               <button
                 onClick={handleExport}
                 disabled={!simplifiedText}
@@ -144,6 +191,7 @@ export default function Index() {
               >
                 Exportar texto
               </button>
+
               <button
                 onClick={handleNewSimplification}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors whitespace-nowrap"
@@ -181,6 +229,53 @@ export default function Index() {
           </section>
         </div>
       </main>
+
+      {/* Report Modal */}
+      {isReportModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={handleCancelReport}
+        >
+          <div
+            className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-inter font-semibold text-xl text-black mb-5">
+              Ingrese el motivo del reporte
+            </h2>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="font-inter font-normal text-base text-[#1E1E1E]">
+                Descripción
+              </label>
+
+              <textarea
+                value={reportDescription}
+                onChange={(e) => setReportDescription(e.target.value)}
+                placeholder="Escriba su descripción aquí..."
+                className="w-full min-h-[95px] border border-[#D9D9D9] rounded px-4 py-3 font-inter text-base text-[#1E1E1E] resize-none outline-none focus:border-[#002855] transition-colors"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={handleCancelReport}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={handleSendReport}
+                disabled={!reportDescription.trim()}
+                className="px-6 py-2 font-inter font-medium text-sm text-white bg-[#002855] hover:bg-[#003d80] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
