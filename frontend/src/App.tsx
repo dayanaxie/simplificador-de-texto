@@ -11,10 +11,11 @@ import SimpleText from "./pages/SimpleText";
 import ForgotPassword from "./pages/forgotPassword";
 import ChangePassword from "./pages/changePassword";
 import AdminPanel from "./pages/admin/AdminPanel";
-
+import EstadisticasPersonales from "./pages/EstadisticasPersonales";
 import RegistrarLayout from "./layout/RegistrarLayout";
 import RegistradoLayout from "./layout/RegistradoLayout";
 import Perfil from "./pages/Perfil";
+import DiccionarioPersonal from "./pages/DiccionarioPersonal";
 
 const App = () => (
   <BrowserRouter>
@@ -35,7 +36,9 @@ const App = () => (
         {/* Pantallas con NavbarRegister */}
         <Route element={<RegistradoLayout />}>
           <Route path="/simplifyText" element={<SimpleText/>} />
-          <Route path="/profile" element={<Perfil/>} />
+          <Route path="/profile" element={<Perfil/>} />|  
+          <Route path="/personal-statistics" element={<EstadisticasPersonales/>} />
+          <Route path="/personal-dictionary" element={<DiccionarioPersonal/>} />
         </Route>
 
       </Routes>
