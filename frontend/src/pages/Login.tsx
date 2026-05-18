@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { supabase } from "../lib/supabaseClient";
 
 const EyeOffIcon = () => (
   <svg
@@ -57,25 +57,93 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [errorMensaje, setErrorMensaje] = useState("");
+
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const RUTA_ADMIN = "/admin";
+  const RUTA_USUARIO = "/simplifyText";
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle login
+
+    setErrorMensaje("");
+
+    if (!email.trim() || !password.trim()) {
+      setErrorMensaje("Ingrese el correo y la contraseña.");
+      return;
+    }
+
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("users")
+      .select(`
+        id,
+        name,
+        email,
+        password_hash,
+        is_active,
+        user_roles (
+          roles (
+            id,
+            name
+          )
+        )
+      `)
+      .eq("email", email.trim())
+      .eq("password_hash", password)
+      .maybeSingle();
+
+    setLoading(false);
+
+    if (error) {
+      console.error("Error al iniciar sesión:", error);
+      setErrorMensaje("Ocurrió un error al iniciar sesión.");
+      return;
+    }
+
+    if (!data) {
+      setErrorMensaje("Correo o contraseña incorrectos.");
+      return;
+    }
+
+    if (!data.is_active) {
+      setErrorMensaje("Su cuenta está inactiva. Contacte al administrador.");
+      return;
+    }
+
+    const usuario = data as any;
+    const rol = usuario.user_roles?.[0]?.roles?.name || "Usuario";
+
+    localStorage.setItem(
+      "usuario",
+      JSON.stringify({
+        id: usuario.id,
+        name: usuario.name,
+        email: usuario.email,
+        role: rol,
+      })
+    );
+
+    if (rol === "Administrador") {
+      navigate(RUTA_ADMIN);
+    } else {
+      navigate(RUTA_USUARIO);
+    }
   };
 
   return (
     <div className="min-h-[calc(100vh-90px)] bg-[#F5F5F5] flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-[845px] bg-white border border-[#E0E0E0] px-12 sm:px-24 py-16">
         <form onSubmit={handleSubmit} className="flex flex-col items-center">
-          {/* Title */}
           <h1 className="font-lexend font-semibold text-3xl sm:text-[32px] text-black leading-[150%] mb-8 text-center">
             Iniciar Sesión
           </h1>
 
-          {/* Form fields */}
           <div className="w-full max-w-[346px] flex flex-col gap-6">
-            {/* Email field */}
             <div className="flex flex-col gap-2">
               <label
                 htmlFor="email"
@@ -83,6 +151,7 @@ export default function Login() {
               >
                 Correo electrónico
               </label>
+
               <input
                 id="email"
                 type="email"
@@ -93,7 +162,6 @@ export default function Login() {
               />
             </div>
 
-            {/* Password field */}
             <div className="flex flex-col gap-2">
               <label
                 htmlFor="password"
@@ -101,6 +169,7 @@ export default function Login() {
               >
                 Contraseña
               </label>
+
               <div className="relative">
                 <input
                   id="password"
@@ -110,18 +179,26 @@ export default function Login() {
                   placeholder="Ingrese su contraseña"
                   className="w-full h-[40px] pl-4 pr-12 border border-[#D9D9D9] bg-white rounded-lg font-inter font-normal text-base text-[#1E1E1E] placeholder:text-[#1E1E1E]/60 outline-none focus:border-[#002855] transition-colors"
                 />
+
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 p-1 flex items-center justify-center"
-                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  aria-label={
+                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
                 >
                   {showPassword ? <EyeIcon /> : <EyeOffIcon />}
                 </button>
               </div>
             </div>
 
-            {/* Forgot password */}
+            {errorMensaje && (
+              <p className="text-sm text-red-700 font-inter">
+                {errorMensaje}
+              </p>
+            )}
+
             <div className="-mt-2">
               <Link
                 to="/forgotPassword"
@@ -132,16 +209,14 @@ export default function Login() {
             </div>
           </div>
 
-          {/* Submit button */}
           <button
-            type="button"
-            onClick={() => {navigate("/simplifyText")}}
-            className="mt-8 w-[230px] h-[41px] bg-[#002855] text-white font-lexend font-semibold text-xl leading-[150%] text-center flex items-center justify-center hover:bg-[#002855]/90 transition-colors"
+            type="submit"
+            disabled={loading}
+            className="mt-8 w-[230px] h-[41px] bg-[#002855] text-white font-lexend font-semibold text-xl leading-[150%] text-center flex items-center justify-center hover:bg-[#002855]/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Iniciar Sesión
+            {loading ? "Ingresando..." : "Iniciar Sesión"}
           </button>
 
-          {/* Register link */}
           <div className="mt-8">
             <Link
               to="/register"
