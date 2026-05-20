@@ -16,6 +16,7 @@ import RegistradoLayout from "./layout/RegistradoLayout";
 import AdmiLayout from "./layout/AdminLayout";
 import Perfil from "./pages/Perfil";
 import DiccionarioPersonal from "./pages/DiccionarioPersonal";
+import TextosGuardados from "./pages/TextosGuardados";
 
 const App = () => (
   <BrowserRouter>
@@ -38,6 +39,7 @@ const App = () => (
           <Route path="/profile" element={<Perfil/>} />|  
           <Route path="/personal-statistics" element={<EstadisticasPersonales/>} />
           <Route path="/personal-dictionary" element={<DiccionarioPersonal/>} />
+          <Route path="/saved-texts" element={<TextosGuardados/>} />
         </Route>
 
         {/* Pantallas con AdminLayout */}
