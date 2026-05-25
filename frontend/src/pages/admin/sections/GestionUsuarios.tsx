@@ -254,7 +254,15 @@ const GestionUsuarios = () => {
 
   const formatearFecha = (fecha?: string | null) => {
     if (!fecha) return "-";
-    return new Date(fecha).toLocaleDateString("es-CR");
+
+    return new Date(fecha).toLocaleString("es-CR", {
+      timeZone: "America/Costa_Rica",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   const cargarUsuarios = async () => {

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { simplifyText } from "../lib/simplifierApi";
 
 const WORD_LIMIT = 500;
 
@@ -26,6 +26,7 @@ export default function Index() {
   const [inputText, setInputText] = useState("");
   const [simplifiedText, setSimplifiedText] = useState("");
   const [isSimplifying, setIsSimplifying] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const wordCount = countWords(inputText);
   const isOverLimit = wordCount > WORD_LIMIT;
@@ -34,62 +35,80 @@ export default function Index() {
     try {
       const text = await navigator.clipboard.readText();
       setInputText(text);
+      setErrorMessage("");
     } catch {
-      // clipboard access denied
+      setErrorMessage("No se pudo acceder al portapapeles.");
     }
   }, []);
 
-  const handleSimplify = useCallback(() => {
-    if (!inputText.trim() || isOverLimit) return;
-    setIsSimplifying(true);
-    setTimeout(() => {
-      setSimplifiedText(inputText);
+  const handleSimplify = useCallback(async () => {
+    if (!inputText.trim() || isOverLimit || isSimplifying) return;
+
+    try {
+      setIsSimplifying(true);
+      setErrorMessage("");
+      setSimplifiedText("");
+
+      const result = await simplifyText(inputText.trim());
+
+      setSimplifiedText(result.simplifiedText);
+    } catch (error) {
+      console.error("Error simplificando:", error);
+
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo simplificar el texto."
+      );
+    } finally {
       setIsSimplifying(false);
-    }, 800);
-  }, [inputText, isOverLimit]);
+    }
+  }, [inputText, isOverLimit, isSimplifying]);
 
   const handleExport = useCallback(() => {
     if (!simplifiedText) return;
+
     const blob = new Blob([simplifiedText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
+
     a.href = url;
     a.download = "texto-simplificado.txt";
     a.click();
+
     URL.revokeObjectURL(url);
   }, [simplifiedText]);
 
   const handleNewSimplification = useCallback(() => {
     setInputText("");
     setSimplifiedText("");
+    setErrorMessage("");
   }, []);
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex flex-col">
-      
-      {/* Main content */}
       <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-8 lg:px-[52px] py-6 sm:py-8 lg:py-[30px]">
         <div className="bg-white border border-[#E0E0E0] w-full p-5 sm:p-8 lg:p-10 flex flex-col gap-6 sm:gap-8">
-
-          {/* Text Simplifier Section */}
           <section className="flex flex-col gap-5 sm:gap-6">
             <h1 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
               Simplificador de Texto
             </h1>
 
-            {/* Input field */}
             <div className="flex flex-col gap-2">
               <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
                 Ingrese un texto menor a {WORD_LIMIT} palabras
               </label>
+
               <textarea
                 className="w-full min-h-[90px] sm:min-h-[100px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
                 placeholder="Ingrese el texto original"
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  setErrorMessage("");
+                }}
               />
 
-              {/* Word counter + action buttons */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-1">
                 <span
                   className={`font-lexend font-normal text-[13px] leading-[100%] text-right sm:text-left ${
@@ -98,14 +117,18 @@ export default function Index() {
                 >
                   {wordCount}/{WORD_LIMIT} palabras
                 </span>
+
                 <div className="flex gap-3 justify-end">
                   <button
+                    type="button"
                     onClick={handlePaste}
                     className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[33px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors whitespace-nowrap"
                   >
                     Pegar
                   </button>
+
                   <button
+                    type="button"
                     onClick={handleSimplify}
                     disabled={!inputText.trim() || isOverLimit || isSimplifying}
                     className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[33px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
@@ -114,37 +137,52 @@ export default function Index() {
                   </button>
                 </div>
               </div>
+
+              {isOverLimit && (
+                <p className="text-sm text-red-600 font-inter">
+                  El texto supera el límite permitido de {WORD_LIMIT} palabras.
+                </p>
+              )}
+
+              {errorMessage && (
+                <p className="text-sm text-red-600 font-inter">
+                  {errorMessage}
+                </p>
+              )}
             </div>
           </section>
 
-          {/* Result Section */}
           <section className="flex flex-col gap-5 sm:gap-6">
             <h2 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
               Resultado de la Simplificación
             </h2>
 
-            {/* Output field */}
             <div className="flex flex-col gap-2">
               <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
                 Texto simplificado
               </label>
-              <div className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%]">
+
+              <div className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] whitespace-pre-wrap">
                 {simplifiedText || (
-                  <span className="text-[#1E1E1E]/40">Texto simplificado</span>
+                  <span className="text-[#1E1E1E]/40">
+                    Texto simplificado
+                  </span>
                 )}
               </div>
             </div>
 
-            {/* Export / New simplification buttons */}
             <div className="flex flex-wrap gap-3 justify-end">
               <button
+                type="button"
                 onClick={handleExport}
                 disabled={!simplifiedText}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 Exportar texto
               </button>
+
               <button
+                type="button"
                 onClick={handleNewSimplification}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors whitespace-nowrap"
               >
@@ -153,7 +191,6 @@ export default function Index() {
             </div>
           </section>
 
-          {/* Announcements Section */}
           <section className="flex flex-col gap-4 sm:gap-5">
             <h2 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
               Anuncios

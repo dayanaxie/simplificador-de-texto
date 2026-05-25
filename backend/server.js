@@ -6,12 +6,7 @@ dotenv.config();
 
 const app = express();
 
-app.use(
-  cors({
-    origin: ["http://localhost:8080", "http://localhost:5173"],
-  })
-);
-
+app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const PORT = process.env.PORT || 3001;
@@ -20,47 +15,72 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3";
 
 const buildSimplifyPrompt = (text) => {
   return `
-Simplifica el siguiente segmento discursivo dado los siguientes ejemplos.
+/no_think
 
-Instrucciones:
+Eres un sistema especializado en simplificación léxica en español.
+
+Tu tarea es simplificar el segmento discursivo recibido aplicando únicamente el criterio: Frecuencia léxica.
+
+Atributo:
+Frecuencia léxica.
+
+Uso del atributo en textos complejos:
+En los textos complejos se emplean palabras de uso poco frecuente, arcaicas o propias de una variedad particular del español.
+
+Pauta para simplificación:
+Sustituir las palabras usadas con baja frecuencia, arcaicas o dialectales por palabras utilizadas comúnmente en el español estándar.
+
+Ejemplo:
+Segmento original:
+La muestra fue sometida a un análisis pormenorizado en el laboratorio de petrología.
+
+Segmento simplificado:
+La muestra fue sometida a un análisis detallado en el laboratorio de petrología.
+
+REGLAS:
 - Mantén el mismo significado del texto original.
-- Usa lenguaje más claro y directo.
+- Cambia únicamente palabras difíciles, poco frecuentes, arcaicas o dialectales.
+- Usa palabras comunes del español estándar.
+- No cambies la estructura del texto si no es necesario.
+- No dividas oraciones largas.
 - No agregues información nueva.
-- No elimines ideas importantes.
-- Conserva nombres propios, fechas, datos y conceptos relevantes.
+- No elimines información importante.
+- Conserva nombres propios, fechas, números y términos técnicos necesarios.
+- No expliques el cambio.
+- No respondas con listas.
 - Responde únicamente con el segmento simplificado.
-- No expliques lo que hiciste.
 
-Por ejemplo:
+IMPORTANTE:
+El texto entre las etiquetas <texto_original> y </texto_original> es solo el texto que debes simplificar.
 
-- Segmento original: Por ejemplo, considere una panadería que reemplace sus cajeros por ánforas; el pan se coloca en las perchas y se invita a los clientes a tomar el que quieran y comerlo.
-- Segmento simplificado: Por ejemplo, una panadería reemplaza sus cajeros por vasijas. Pone el pan en las perchas e invita a los clientes a comer el pan que quieran.
+<texto_original>
+${text}
+</texto_original>
 
-- Segmento original: En cambio, los comerciantes (quienes venden, sean personas o empresas) emiten o reciben facturas por sus ventas y sus compras, donde separan el valor de la mercancía del valor del impuesto y ello determina, cada mes, un saldo a favor del fisco (débito mayor que crédito) o del comerciante (débito menor que crédito).
-- Segmento simplificado: En cambio, los comerciantes dan o reciben facturas por sus ventas y compras. Donde separan el precio del producto del impuesto. Esto determina mensualmente un saldo a favor del fisco o del comerciante.
-
-- Segmento original: Pero, inclusive, siendo una persona mayor, Paul Getty trabajó arduamente, aún después de haber hecho su fortuna.
-- Segmento simplificado: Todavía siendo una persona mayor, Paul Getty trabajó mucho, incluso después de haber hecho su fortuna.
-
-- Segmento original: Por otro lado, la hierba mala generalmente no tiene uso práctico y no se clasifica como un bien económico.
-- Segmento simplificado: Por otro lado, la hierba mala no tiene uso práctico y no se clasifica como un bien económico.
-
-- Segmento original: Se selecciona la celda de entrada y se acepta el cálculo.
-- Segmento simplificado: Seleccionamos la celda de entrada y aceptamos el cálculo.
-
-Simplifica el siguiente segmento:
-
-- Segmento original: ${text}
-- Segmento simplificado:
+Segmento simplificado:
 `.trim();
 };
 
 const cleanModelResponse = (text) => {
   return text
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*/gi, "")
     .replace(/^[-•\s]*Segmento simplificado:\s*/i, "")
+    .replace(/^["“”]+|["“”]+$/g, "")
     .trim();
 };
+
+app.get("/", (req, res) => {
+  res.send("Backend del simplificador funcionando correctamente.");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    model: OLLAMA_MODEL,
+    criterion: "Frecuencia léxica",
+  });
+});
 
 app.post("/api/simplify", async (req, res) => {
   try {
@@ -74,18 +94,26 @@ app.post("/api/simplify", async (req, res) => {
 
     const prompt = buildSimplifyPrompt(text.trim());
 
-    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+    const response = await fetch(`${OLLAMA_URL}/api/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: OLLAMA_MODEL,
-        prompt,
+        think: false,
         stream: false,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
         options: {
           temperature: 0.2,
           top_p: 0.9,
+          repeat_penalty: 1.1,
+          num_predict: 200,
         },
       }),
     });
@@ -101,11 +129,29 @@ app.post("/api/simplify", async (req, res) => {
 
     const data = await response.json();
 
-    const simplifiedText = cleanModelResponse(data.response || "");
+    console.log("Respuesta completa de Ollama:", JSON.stringify(data, null, 2));
+
+    const rawResponse =
+      data?.message?.content ||
+      data?.response ||
+      "";
+
+    const simplifiedText = cleanModelResponse(rawResponse);
+
+    console.log("Respuesta cruda:", rawResponse);
+    console.log("Respuesta limpia:", simplifiedText);
+
+    if (!simplifiedText) {
+      return res.status(500).json({
+        error:
+          "El modelo no devolvió una simplificación. Intente de nuevo o use un modelo sin modo pensamiento.",
+      });
+    }
 
     return res.json({
       originalText: text,
       simplifiedText,
+      criterion: "Frecuencia léxica",
     });
   } catch (error) {
     console.error("Error en /api/simplify:", error);
@@ -118,4 +164,6 @@ app.post("/api/simplify", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Backend corriendo en http://localhost:${PORT}`);
+  console.log(`Modelo Ollama: ${OLLAMA_MODEL}`);
+  console.log("Criterio activo: Frecuencia léxica");
 });

@@ -36,7 +36,7 @@ const App = () => (
         {/* Pantallas con NavbarRegister */}
         <Route element={<RegistradoLayout />}>
           <Route path="/simplifyText" element={<SimpleText/>} />
-          <Route path="/profile" element={<Perfil/>} />|  
+          <Route path="/profile" element={<Perfil/>} />
           <Route path="/personal-statistics" element={<EstadisticasPersonales/>} />
           <Route path="/personal-dictionary" element={<DiccionarioPersonal/>} />
           <Route path="/saved-texts" element={<TextosGuardados/>} />
