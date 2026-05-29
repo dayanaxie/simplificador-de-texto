@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { simplifyText } from "../lib/simplifierApi";
 
 const WORD_LIMIT = 500;
@@ -27,17 +27,49 @@ export default function Index() {
   const [simplifiedText, setSimplifiedText] = useState("");
   const [isSimplifying, setIsSimplifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const inputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const wordCount = countWords(inputText);
   const isOverLimit = wordCount > WORD_LIMIT;
 
   const handlePaste = useCallback(async () => {
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    inputTextareaRef.current?.focus();
+
     try {
+      if (!window.isSecureContext) {
+        setErrorMessage(
+          "El navegador bloqueó el botón Pegar. Haz clic en el cuadro y usa Ctrl + V."
+        );
+        return;
+      }
+
+      if (!navigator.clipboard?.readText) {
+        setErrorMessage(
+          "Este navegador no permite pegar con botón. Haz clic en el cuadro y usa Ctrl + V."
+        );
+        return;
+      }
+
       const text = await navigator.clipboard.readText();
+
+      if (!text.trim()) {
+        setErrorMessage("El portapapeles está vacío.");
+        return;
+      }
+
       setInputText(text);
-      setErrorMessage("");
-    } catch {
-      setErrorMessage("No se pudo acceder al portapapeles.");
+      setSuccessMessage("Texto pegado correctamente.");
+    } catch (error) {
+      console.error("Error al pegar:", error);
+      setErrorMessage(
+        "El navegador bloqueó el botón Pegar. Ya enfoqué el cuadro: presiona Ctrl + V."
+      );
     }
   }, []);
 
@@ -47,11 +79,13 @@ export default function Index() {
     try {
       setIsSimplifying(true);
       setErrorMessage("");
+      setSuccessMessage("");
       setSimplifiedText("");
 
       const result = await simplifyText(inputText.trim());
 
       setSimplifiedText(result.simplifiedText);
+      setSuccessMessage("Texto simplificado correctamente.");
     } catch (error) {
       console.error("Error simplificando:", error);
 
@@ -60,10 +94,42 @@ export default function Index() {
           ? error.message
           : "No se pudo simplificar el texto."
       );
+      setSuccessMessage("");
     } finally {
       setIsSimplifying(false);
     }
   }, [inputText, isOverLimit, isSimplifying]);
+
+  const handleCopyResult = useCallback(async () => {
+    if (!simplifiedText.trim()) return;
+
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      if (window.isSecureContext && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(simplifiedText);
+        setSuccessMessage("Texto copiado correctamente.");
+        return;
+      }
+
+      outputTextareaRef.current?.focus();
+      outputTextareaRef.current?.select();
+
+      const copied = document.execCommand("copy");
+
+      if (!copied) {
+        throw new Error("No se pudo copiar.");
+      }
+
+      setSuccessMessage("Texto copiado correctamente.");
+    } catch (error) {
+      console.error("Error al copiar:", error);
+      setErrorMessage(
+        "El navegador no permitió copiar. Selecciona el resultado y usa Ctrl + C."
+      );
+    }
+  }, [simplifiedText]);
 
   const handleExport = useCallback(() => {
     if (!simplifiedText) return;
@@ -83,6 +149,7 @@ export default function Index() {
     setInputText("");
     setSimplifiedText("");
     setErrorMessage("");
+    setSuccessMessage("");
   }, []);
 
   return (
@@ -100,12 +167,14 @@ export default function Index() {
               </label>
 
               <textarea
+                ref={inputTextareaRef}
                 className="w-full min-h-[90px] sm:min-h-[100px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
                 placeholder="Ingrese el texto original"
                 value={inputText}
                 onChange={(e) => {
                   setInputText(e.target.value);
                   setErrorMessage("");
+                  setSuccessMessage("");
                 }}
               />
 
@@ -149,6 +218,12 @@ export default function Index() {
                   {errorMessage}
                 </p>
               )}
+
+              {successMessage && (
+                <p className="text-sm text-green-600 font-inter">
+                  {successMessage}
+                </p>
+              )}
             </div>
           </section>
 
@@ -162,16 +237,25 @@ export default function Index() {
                 Texto simplificado
               </label>
 
-              <div className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] whitespace-pre-wrap">
-                {simplifiedText || (
-                  <span className="text-[#1E1E1E]/40">
-                    Texto simplificado
-                  </span>
-                )}
-              </div>
+              <textarea
+                ref={outputTextareaRef}
+                readOnly
+                className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
+                placeholder="Texto simplificado"
+                value={simplifiedText}
+              />
             </div>
 
             <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={handleCopyResult}
+                disabled={!simplifiedText}
+                className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                Copiar texto
+              </button>
+
               <button
                 type="button"
                 onClick={handleExport}
