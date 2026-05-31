@@ -1,19 +1,17 @@
 import { useState, useEffect, useRef } from "react";
-import DialogoConfirmar from "../sections/DialogoConfirmar";
+import { supabase } from "../../../lib/supabaseClient";
+import DialogoConfirmar from "./DialogoConfirmar";
 
 interface RegistroAuditoria {
-  id: string;
-  fecha: string;
-  usuario: string;
-  detalle: string;
-  accion: string;
+  id: number;
+  user_id: number | null;
+  action: string;
+  entity: string;
+  created_at: string;
+  users?: { email: string; name: string } | null;
 }
 
-const registrosIniciales: RegistroAuditoria[] = [
-  { id: "1", fecha: "18/04/2026", usuario: "ana@gmail.com",  detalle: "----", accion: "Incompleto" },
-  { id: "2", fecha: "18/03/2026", usuario: "juan@gmail.com", detalle: "----", accion: "Completado" },
-  { id: "3", fecha: "17/02/2026", usuario: "luis@gmail.com", detalle: "----", accion: "Completado" },
-];
+interface Usuario { id: number; email: string; name: string; }
 
 const btnAzul =
   "inline-flex items-center justify-center min-h-[44px] px-6 " +
@@ -23,16 +21,17 @@ const btnAzul =
   "focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 " +
   "transition-opacity duration-150";
 
-// ── Íconos ────────────────────────────────────────────────────────────────────
 const IcoEditar = () => (
-  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
   </svg>
 );
 
 const IcoEliminar = () => (
-  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="3 6 5 6 21 6" />
     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     <path d="M10 11v6M14 11v6" />
@@ -40,109 +39,65 @@ const IcoEliminar = () => (
   </svg>
 );
 
-// ── Panel de edición inline ───────────────────────────────────────────────────
+const formatearFecha = (iso: string) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-CR") + " " + d.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" });
+};
+
 interface PanelEdicionProps {
   registro: RegistroAuditoria;
-  onGuardar: (datos: Partial<RegistroAuditoria>) => void;
+  usuarios: Usuario[];
+  onGuardar: (datos: { action: string; entity: string }) => void;
   onCancelar: () => void;
 }
 
 const PanelEdicion = ({ registro, onGuardar, onCancelar }: PanelEdicionProps) => {
-  const [usuario, setUsuario] = useState(registro.usuario);
-  const [detalle, setDetalle] = useState(registro.detalle);
-  const [accion, setAccion]   = useState(registro.accion);
-  const [errores, setErrores] = useState<{ usuario?: string }>({});
-  const primerCampoRef        = useRef<HTMLInputElement>(null);
+  const [action, setAction] = useState(registro.action ?? "");
+  const [entity, setEntity] = useState(registro.entity ?? "");
+  const [errores, setErrores] = useState<{ action?: string }>({});
+  const ref = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { primerCampoRef.current?.focus(); }, []);
-
+  useEffect(() => { ref.current?.focus(); }, []);
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onCancelar(); };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onCancelar(); };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
   }, [onCancelar]);
 
   const guardar = () => {
-    const e: { usuario?: string } = {};
-    if (!usuario.trim()) e.usuario = "El usuario es obligatorio.";
+    const e: { action?: string } = {};
+    if (!action.trim()) e.action = "La acción es obligatoria.";
     setErrores(e);
-    if (Object.keys(e).length > 0) { primerCampoRef.current?.focus(); return; }
-    onGuardar({ usuario, detalle, accion });
+    if (Object.keys(e).length > 0) { ref.current?.focus(); return; }
+    onGuardar({ action, entity });
   };
 
   return (
-    <div
-      role="region"
-      aria-label={"Editar registro del " + registro.fecha}
-      className="absolute left-0 right-0 z-20 bg-white border border-border rounded-lg shadow-xl p-5 mt-1"
-    >
-      <h3 className="text-base font-bold text-foreground mb-4">
-        Editar registro — {registro.fecha}
-      </h3>
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+    <div role="region" aria-label={"Editar registro #" + registro.id}
+      className="absolute left-0 right-0 z-20 bg-white border border-border rounded-lg shadow-xl p-5 mt-1">
+      <h3 className="text-base font-bold text-foreground mb-4">Editar registro de auditoría</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         <div>
-          <label htmlFor="edit-usuario" className="block text-xs font-medium text-foreground mb-1">
-            Usuario <span aria-hidden="true" className="text-destructive">*</span>
-            <span className="sr-only">(obligatorio)</span>
+          <label htmlFor="edit-action" className="block text-xs font-medium text-foreground mb-1">
+            Acción <span aria-hidden="true" className="text-destructive">*</span>
           </label>
-          <input
-            id="edit-usuario"
-            ref={primerCampoRef}
-            type="text"
-            value={usuario}
-            onChange={(e) => setUsuario(e.target.value)}
-            aria-required="true"
-            aria-invalid={errores.usuario ? true : undefined}
-            aria-describedby={errores.usuario ? "err-edit-usuario" : undefined}
-            className={
-              "w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground " +
-              "focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " +
-              (errores.usuario ? "border-destructive" : "border-border")
-            }
-          />
-          {errores.usuario && (
-            <p id="err-edit-usuario" role="alert" className="mt-1 text-xs text-destructive">
-              {errores.usuario}
-            </p>
-          )}
+          <input id="edit-action" ref={ref} type="text" value={action}
+            onChange={(e) => setAction(e.target.value)} aria-required="true"
+            aria-invalid={errores.action ? true : undefined}
+            className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (errores.action ? "border-destructive" : "border-border")} />
+          {errores.action && <p role="alert" className="mt-1 text-xs text-destructive">{errores.action}</p>}
         </div>
-
         <div>
-          <label htmlFor="edit-detalle" className="block text-xs font-medium text-foreground mb-1">
-            Detalle
-          </label>
-          <input
-            id="edit-detalle"
-            type="text"
-            value={detalle}
-            onChange={(e) => setDetalle(e.target.value)}
-            className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="edit-accion" className="block text-xs font-medium text-foreground mb-1">
-            Acción
-          </label>
-          <select
-            id="edit-accion"
-            value={accion}
-            onChange={(e) => setAccion(e.target.value)}
-            className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1"
-          >
-            <option value="Completado">Completado</option>
-            <option value="Incompleto">Incompleto</option>
-          </select>
+          <label htmlFor="edit-entity" className="block text-xs font-medium text-foreground mb-1">Entidad / Detalle</label>
+          <input id="edit-entity" type="text" value={entity} onChange={(e) => setEntity(e.target.value)}
+            className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1" />
         </div>
       </div>
-
       <div className="flex gap-3">
         <button onClick={guardar} className={btnAzul}>Guardar cambios</button>
-        <button
-          onClick={onCancelar}
-          className="min-h-[44px] px-5 text-sm font-medium border border-border rounded-md text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 transition-colors"
-        >
+        <button onClick={onCancelar}
+          className="min-h-[44px] px-5 text-sm font-medium border border-border rounded-md text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 transition-colors">
           Cancelar
         </button>
       </div>
@@ -150,241 +105,163 @@ const PanelEdicion = ({ registro, onGuardar, onCancelar }: PanelEdicionProps) =>
   );
 };
 
-// ── Componente principal ──────────────────────────────────────────────────────
 const Auditoria = () => {
-  const [registros, setRegistros]       = useState<RegistroAuditoria[]>(registrosIniciales);
+  const [registros, setRegistros]       = useState<RegistroAuditoria[]>([]);
+  const [cargando, setCargando]         = useState(true);
+  const [errorCarga, setErrorCarga]     = useState("");
+  const [usuarios, setUsuarios]         = useState<Usuario[]>([]);
   const [busqueda, setBusqueda]         = useState("");
-  const [editandoId, setEditandoId]     = useState<string | null>(null);
-  const [eliminandoId, setEliminandoId] = useState<string | null>(null);
-  const [mensaje, setMensaje]           = useState("");
-
-  // ── Estado del formulario de nuevo registro ──────────────────────────────
+  const [editandoId, setEditandoId]     = useState<number | null>(null);
+  const [eliminandoId, setEliminandoId] = useState<number | null>(null);
+  const [guardando, setGuardando]       = useState(false);
   const [mostrarForm, setMostrarForm]   = useState(false);
-  const [nuevoUsuario, setNuevoUsuario] = useState("");
-  const [nuevoDetalle, setNuevoDetalle] = useState("");
-  const [nuevoAccion, setNuevoAccion]   = useState("Completado");
-  const [erroresNuevo, setErroresNuevo] = useState<{ usuario?: string }>({});
+  const [nuevoUserId, setNuevoUserId]   = useState("");
+  const [nuevoAction, setNuevoAction]   = useState("");
+  const [nuevoEntity, setNuevoEntity]   = useState("");
+  const [erroresNuevo, setErroresNuevo] = useState<Record<string, string>>({});
+  const [mensaje, setMensaje]           = useState("");
+  const botonOrigenRef = useRef<HTMLButtonElement | null>(null);
+  const primerCampoRef = useRef<HTMLSelectElement>(null);
 
-  const botonOrigenRef  = useRef<HTMLButtonElement | null>(null);
-  const primerCampoNuevoRef = useRef<HTMLInputElement>(null);
+  const anunciar = (t: string) => { setMensaje(t); setTimeout(() => setMensaje(""), 5000); };
 
-  const anunciar = (texto: string) => {
-    setMensaje(texto);
-    setTimeout(() => setMensaje(""), 5000);
+  useEffect(() => { if (mostrarForm) setTimeout(() => primerCampoRef.current?.focus(), 50); }, [mostrarForm]);
+
+  const cargarRegistros = async () => {
+    setCargando(true); setErrorCarga("");
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("*, users(email, name)")
+      .order("created_at", { ascending: false });
+    if (error) { console.error(error); setErrorCarga("No se pudieron cargar los registros."); }
+    else setRegistros(data ?? []);
+    setCargando(false);
   };
 
-  // Mover foco al formulario cuando se abre
-  useEffect(() => {
-    if (mostrarForm) {
-      setTimeout(() => primerCampoNuevoRef.current?.focus(), 50);
-    }
-  }, [mostrarForm]);
+  const cargarUsuarios = async () => {
+    const { data } = await supabase.from("users").select("id, email, name").eq("is_active", true).order("name");
+    setUsuarios(data ?? []);
+  };
 
-  const filtrados = registros.filter((r) =>
-    r.fecha.includes(busqueda) ||
-    r.usuario.toLowerCase().includes(busqueda.toLowerCase()) ||
-    r.accion.toLowerCase().includes(busqueda.toLowerCase())
-  );
+  useEffect(() => { cargarRegistros(); cargarUsuarios(); }, []);
 
-  // ── Crear nuevo registro ──────────────────────────────────────────────────
-  const validarNuevo = () => {
-    const e: { usuario?: string } = {};
-    if (!nuevoUsuario.trim()) e.usuario = "El usuario es obligatorio.";
+  const filtrados = registros.filter((r) => {
+    const txt = busqueda.toLowerCase();
+    return formatearFecha(r.created_at).toLowerCase().includes(txt) ||
+      (r.users?.name ?? "").toLowerCase().includes(txt) ||
+      (r.users?.email ?? "").toLowerCase().includes(txt) ||
+      (r.action ?? "").toLowerCase().includes(txt);
+  });
+
+  const crearRegistro = async () => {
+    const e: Record<string, string> = {};
+    if (!nuevoAction.trim()) e.action = "La acción es obligatoria.";
     setErroresNuevo(e);
-    return Object.keys(e).length === 0;
-  };
+    if (Object.keys(e).length > 0) return;
 
-  const crearRegistro = () => {
-    if (!validarNuevo()) {
-      primerCampoNuevoRef.current?.focus();
-      return;
-    }
-    const hoy = new Date();
-    const fecha = hoy.toLocaleDateString("es-CR");
-    const nuevo: RegistroAuditoria = {
-      id:      crypto.randomUUID(),
-      fecha,
-      usuario: nuevoUsuario,
-      detalle: nuevoDetalle || "----",
-      accion:  nuevoAccion,
+    setGuardando(true);
+    const payload: Record<string, unknown> = {
+      action:     nuevoAction,
+      entity:     nuevoEntity || null,
+      created_at: new Date().toISOString(),
     };
-    setRegistros((prev) => [nuevo, ...prev]);
-    setNuevoUsuario("");
-    setNuevoDetalle("");
-    setNuevoAccion("Completado");
-    setErroresNuevo({});
-    setMostrarForm(false);
-    anunciar("Registro de " + nuevo.usuario + " agregado correctamente.");
+    if (nuevoUserId) payload.user_id = Number(nuevoUserId);
+
+    const { error } = await supabase.from("audit_logs").insert([payload]);
+    if (error) { console.error(error); anunciar("Error al crear el registro. Revisá la consola."); }
+    else {
+      anunciar("Registro creado correctamente.");
+      setNuevoUserId(""); setNuevoAction(""); setNuevoEntity("");
+      setErroresNuevo({}); setMostrarForm(false);
+      await cargarRegistros();
+    }
+    setGuardando(false);
   };
 
-  const descartarNuevo = () => {
-    setNuevoUsuario("");
-    setNuevoDetalle("");
-    setNuevoAccion("Completado");
-    setErroresNuevo({});
-    setMostrarForm(false);
-  };
+  const abrirEdicion = (id: number, btn: HTMLButtonElement) => { botonOrigenRef.current = btn; setEditandoId(id); setEliminandoId(null); };
+  const cerrarEdicion = () => { setEditandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null; };
 
-  // ── Editar ────────────────────────────────────────────────────────────────
-  const abrirEdicion = (id: string, btn: HTMLButtonElement) => {
-    botonOrigenRef.current = btn;
-    setEditandoId(id);
-    setEliminandoId(null);
-  };
-
-  const cerrarEdicion = () => {
-    setEditandoId(null);
-    botonOrigenRef.current?.focus();
-    botonOrigenRef.current = null;
-  };
-
-  const guardarEdicion = (id: string, datos: Partial<RegistroAuditoria>) => {
-    setRegistros((prev) => prev.map((r) => r.id === id ? { ...r, ...datos } : r));
+  const guardarEdicion = async (id: number, datos: { action: string; entity: string }) => {
+    const { error } = await supabase.from("audit_logs").update({ action: datos.action, entity: datos.entity }).eq("id", id);
+    if (error) { console.error(error); anunciar("Error al actualizar. Revisá la consola."); }
+    else { anunciar("Registro actualizado."); await cargarRegistros(); }
     cerrarEdicion();
-    anunciar("Registro actualizado correctamente.");
   };
 
-  // ── Eliminar ──────────────────────────────────────────────────────────────
-  const abrirEliminar = (id: string, btn: HTMLButtonElement) => {
-    botonOrigenRef.current = btn;
-    setEliminandoId(id);
-    setEditandoId(null);
+  const abrirEliminar = (id: number, btn: HTMLButtonElement) => { botonOrigenRef.current = btn; setEliminandoId(id); setEditandoId(null); };
+
+  const confirmarEliminar = async () => {
+    if (eliminandoId === null) return;
+    const { error } = await supabase.from("audit_logs").delete().eq("id", eliminandoId);
+    if (error) { console.error(error); anunciar("Error al eliminar. Revisá la consola."); }
+    else { anunciar("Registro eliminado."); await cargarRegistros(); }
+    setEliminandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null;
   };
 
-  const confirmarEliminar = () => {
-    if (!eliminandoId) return;
-    const reg = registros.find((r) => r.id === eliminandoId);
-    setRegistros((prev) => prev.filter((r) => r.id !== eliminandoId));
-    setEliminandoId(null);
-    botonOrigenRef.current?.focus();
-    botonOrigenRef.current = null;
-    anunciar("Registro del " + (reg?.fecha ?? "") + " eliminado.");
-  };
-
-  const cancelarEliminar = () => {
-    setEliminandoId(null);
-    botonOrigenRef.current?.focus();
-    botonOrigenRef.current = null;
-  };
-
+  const cancelarEliminar = () => { setEliminandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null; };
   const registroAEliminar = registros.find((r) => r.id === eliminandoId);
 
   return (
     <div>
-      {/* Región live — WCAG 4.1.3 */}
-      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {mensaje}
-      </div>
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{mensaje}</div>
 
-      {/* Diálogo de eliminación */}
-      {eliminandoId && registroAEliminar && (
-        <DialogoConfirmar
-          titulo="Eliminar registro"
-          mensaje={
-            "¿Estás segura de que querés eliminar el registro del " +
-            registroAEliminar.fecha + " de " + registroAEliminar.usuario +
-            "? Esta acción no se puede deshacer."
-          }
-          onConfirmar={confirmarEliminar}
-          onCancelar={cancelarEliminar}
-        />
+      {eliminandoId !== null && registroAEliminar && (
+        <DialogoConfirmar titulo="Eliminar registro"
+          mensaje={`¿Estás segura de que querés eliminar el registro "${registroAEliminar.action}" del ${formatearFecha(registroAEliminar.created_at)}? Esta acción no se puede deshacer.`}
+          onConfirmar={confirmarEliminar} onCancelar={cancelarEliminar} />
       )}
 
-      <h2 id="h-auditoria" className="text-2xl font-bold text-center text-foreground mb-6">
-        Log de Auditoría
-      </h2>
+      <h2 id="h-auditoria" className="text-2xl font-bold text-center text-foreground mb-6">Log de Auditoría</h2>
 
-      {/* ── Formulario nuevo registro ─────────────────────────────────────── */}
-      <section aria-labelledby="h-nuevo-registro" className="mb-6">
+      {/* Formulario nuevo registro */}
+      <section aria-labelledby="h-nuevo-reg" className="mb-6">
         <div className="flex items-center justify-between mb-3">
-          <h3 id="h-nuevo-registro" className="text-sm font-semibold text-foreground">
-            {mostrarForm ? "Nuevo registro" : ""}
-          </h3>
-          <button
-            onClick={() => setMostrarForm((v) => !v)}
-            aria-expanded={mostrarForm}
-            aria-controls="form-nuevo-registro"
-            className={btnAzul}
-          >
+          <h3 id="h-nuevo-reg" className="text-sm font-semibold text-foreground">{mostrarForm ? "Nuevo registro" : ""}</h3>
+          <button onClick={() => setMostrarForm((v) => !v)} aria-expanded={mostrarForm} aria-controls="form-nuevo-reg" className={btnAzul}>
             {mostrarForm ? "Cancelar" : "+ Nuevo registro"}
           </button>
         </div>
 
         {mostrarForm && (
-          <div
-            id="form-nuevo-registro"
-            className="border border-border rounded-lg p-5 bg-page-bg"
-          >
+          <div id="form-nuevo-reg" className="border border-border rounded-lg p-5 bg-page-bg">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-              {/* Usuario */}
+              {/* Selector de usuario por nombre/email */}
               <div>
-                <label htmlFor="nuevo-usuario" className="block text-xs font-medium text-foreground mb-1">
-                  Usuario <span aria-hidden="true" className="text-destructive">*</span>
-                  <span className="sr-only">(obligatorio)</span>
+                <label htmlFor="nuevo-user-sel" className="block text-xs font-medium text-foreground mb-1">
+                  Usuario <span className="text-muted-foreground">(opcional)</span>
                 </label>
-                <input
-                  id="nuevo-usuario"
-                  ref={primerCampoNuevoRef}
-                  type="text"
-                  value={nuevoUsuario}
-                  onChange={(e) => setNuevoUsuario(e.target.value)}
-                  placeholder="correo@ejemplo.com"
-                  aria-required="true"
-                  aria-invalid={erroresNuevo.usuario ? true : undefined}
-                  aria-describedby={erroresNuevo.usuario ? "err-nuevo-usuario" : undefined}
-                  className={
-                    "w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground " +
-                    "focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " +
-                    (erroresNuevo.usuario ? "border-destructive" : "border-border")
-                  }
-                />
-                {erroresNuevo.usuario && (
-                  <p id="err-nuevo-usuario" role="alert" className="mt-1 text-xs text-destructive">
-                    {erroresNuevo.usuario}
-                  </p>
-                )}
-              </div>
-
-              {/* Detalle */}
-              <div>
-                <label htmlFor="nuevo-detalle" className="block text-xs font-medium text-foreground mb-1">
-                  Detalle
-                </label>
-                <input
-                  id="nuevo-detalle"
-                  type="text"
-                  value={nuevoDetalle}
-                  onChange={(e) => setNuevoDetalle(e.target.value)}
-                  placeholder="Descripción del evento"
-                  className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1"
-                />
-              </div>
-
-              {/* Acción */}
-              <div>
-                <label htmlFor="nuevo-accion" className="block text-xs font-medium text-foreground mb-1">
-                  Acción
-                </label>
-                <select
-                  id="nuevo-accion"
-                  value={nuevoAccion}
-                  onChange={(e) => setNuevoAccion(e.target.value)}
-                  className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1"
-                >
-                  <option value="Completado">Completado</option>
-                  <option value="Incompleto">Incompleto</option>
+                <select id="nuevo-user-sel" ref={primerCampoRef} value={nuevoUserId}
+                  onChange={(e) => setNuevoUserId(e.target.value)}
+                  className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1">
+                  <option value="">Sin usuario</option>
+                  {usuarios.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
                 </select>
               </div>
-            </div>
 
+              <div>
+                <label htmlFor="nuevo-action" className="block text-xs font-medium text-foreground mb-1">
+                  Acción <span aria-hidden="true" className="text-destructive">*</span>
+                </label>
+                <input id="nuevo-action" type="text" value={nuevoAction}
+                  onChange={(e) => setNuevoAction(e.target.value)} placeholder="Ej: LOGIN, DELETE, UPDATE"
+                  aria-required="true" aria-invalid={erroresNuevo.action ? true : undefined}
+                  className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (erroresNuevo.action ? "border-destructive" : "border-border")} />
+                {erroresNuevo.action && <p role="alert" className="mt-1 text-xs text-destructive">{erroresNuevo.action}</p>}
+              </div>
+
+              <div>
+                <label htmlFor="nuevo-entity" className="block text-xs font-medium text-foreground mb-1">Entidad / Detalle</label>
+                <input id="nuevo-entity" type="text" value={nuevoEntity}
+                  onChange={(e) => setNuevoEntity(e.target.value)} placeholder="Ej: users, announcements"
+                  className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1" />
+              </div>
+            </div>
             <div className="flex gap-3">
-              <button onClick={crearRegistro} className={btnAzul}>
-                Agregar registro
+              <button onClick={crearRegistro} disabled={guardando} className={btnAzul + (guardando ? " opacity-50" : "")}>
+                {guardando ? "Guardando..." : "Agregar registro"}
               </button>
-              <button
-                onClick={descartarNuevo}
-                className="min-h-[44px] px-5 text-sm font-medium border border-border rounded-md text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 transition-colors"
-              >
+              <button onClick={() => { setMostrarForm(false); setNuevoUserId(""); setNuevoAction(""); setNuevoEntity(""); setErroresNuevo({}); }}
+                className="min-h-[44px] px-5 text-sm font-medium border border-border rounded-md text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 transition-colors">
                 Descartar
               </button>
             </div>
@@ -392,97 +269,74 @@ const Auditoria = () => {
         )}
       </section>
 
-      {/* ── Buscador ─────────────────────────────────────────────────────── */}
+      {/* Buscador */}
       <div className="flex gap-3 mb-6" role="search">
-        <label htmlFor="buscar-auditoria" className="sr-only">
-          Buscar en el log de auditoría por fecha, usuario o acción
-        </label>
+        <label htmlFor="buscar-auditoria" className="sr-only">Buscar por fecha, usuario o acción</label>
         <div className="relative flex-1">
-          <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-            🔍
-          </span>
-          <input
-            id="buscar-auditoria"
-            type="search"
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Inserte la fecha, usuario o acción"
-            className="w-full pl-9 pr-4 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1"
-          />
+          <span aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">🔍</span>
+          <input id="buscar-auditoria" type="search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por fecha, usuario o acción"
+            className="w-full pl-9 pr-4 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1" />
         </div>
-        <button
-          onClick={() => anunciar("Mostrando " + filtrados.length + " registro(s).")}
-          className={btnAzul}
-        >
-          Buscar
-        </button>
+        <button onClick={() => anunciar(`Mostrando ${filtrados.length} registro(s).`)} className={btnAzul}>Buscar</button>
       </div>
 
-      {/* ── Tabla ────────────────────────────────────────────────────────── */}
+      {/* Tabla */}
       <div className="overflow-x-auto">
         <div className="relative">
           <table className="w-full text-sm text-left" aria-labelledby="h-auditoria">
-            <caption className="sr-only">
-              Log de auditoría con fecha, usuario, detalle y acción. Cada fila tiene opciones para editar y eliminar.
-            </caption>
+            <caption className="sr-only">Log de auditoría con fecha, usuario, acción y entidad</caption>
             <thead>
               <tr className="border-b border-border">
                 <th scope="col" className="py-3 pr-4 font-semibold text-foreground">Fecha</th>
                 <th scope="col" className="py-3 pr-4 font-semibold text-foreground">Usuario</th>
-                <th scope="col" className="py-3 pr-4 font-semibold text-foreground">Detalle</th>
                 <th scope="col" className="py-3 pr-4 font-semibold text-foreground">Acción</th>
+                <th scope="col" className="py-3 pr-4 font-semibold text-foreground">Entidad</th>
                 <th scope="col" className="py-3 pr-4 font-semibold text-foreground">Editar</th>
                 <th scope="col" className="py-3 font-semibold text-foreground">Eliminar</th>
               </tr>
             </thead>
             <tbody>
-              {filtrados.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-muted-foreground">
-                    No se encontraron registros.
-                  </td>
-                </tr>
+              {cargando ? (
+                <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">Cargando registros...</td></tr>
+              ) : errorCarga ? (
+                <tr><td colSpan={6} className="py-8 text-center" role="alert">
+                  <span className="text-destructive">{errorCarga}</span>
+                  <button onClick={cargarRegistros} className="ml-3 text-primary underline text-sm">Reintentar</button>
+                </td></tr>
+              ) : filtrados.length === 0 ? (
+                <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">
+                  {registros.length === 0 ? "No hay registros de auditoría." : "No se encontraron registros."}
+                </td></tr>
               ) : (
                 filtrados.map((r) => (
                   <tr key={r.id} className="border-b border-border last:border-0">
-                    <td className="py-3 pr-4 text-foreground whitespace-nowrap">{r.fecha}</td>
+                    <td className="py-3 pr-4 text-foreground whitespace-nowrap">{formatearFecha(r.created_at)}</td>
                     <td className="py-3 pr-4">
-                      <a
-                        href={"mailto:" + r.usuario}
-                        className="text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] rounded"
-                      >
-                        {r.usuario}
-                      </a>
+                      {r.users ? (
+                        <div>
+                          <p className="text-foreground font-medium">{r.users.name}</p>
+                          <p className="text-xs text-muted-foreground">{r.users.email}</p>
+                        </div>
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="py-3 pr-4 text-muted-foreground">{r.detalle}</td>
                     <td className="py-3 pr-4">
-                      <span
-                        className={
-                          "inline-block px-2 py-0.5 rounded-full text-xs font-medium " +
-                          (r.accion === "Completado"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-yellow-100 text-yellow-800")
-                        }
-                      >
-                        {r.accion}
+                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        {r.action ?? "—"}
                       </span>
                     </td>
+                    <td className="py-3 pr-4 text-muted-foreground">{r.entity ?? "—"}</td>
                     <td className="py-3 pr-4">
-                      <button
-                        onClick={(e) => abrirEdicion(r.id, e.currentTarget)}
-                        aria-label={"Editar registro del " + r.fecha + " de " + r.usuario}
-                        aria-expanded={editandoId === r.id}
-                        className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))]"
-                      >
+                      <button onClick={(e) => abrirEdicion(r.id, e.currentTarget)}
+                        aria-label={`Editar registro: ${r.action}`} aria-expanded={editandoId === r.id}
+                        className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))]">
                         <IcoEditar />
                       </button>
                     </td>
                     <td className="py-3">
-                      <button
-                        onClick={(e) => abrirEliminar(r.id, e.currentTarget)}
-                        aria-label={"Eliminar registro del " + r.fecha + " de " + r.usuario}
-                        className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
-                      >
+                      <button onClick={(e) => abrirEliminar(r.id, e.currentTarget)}
+                        aria-label={`Eliminar registro: ${r.action}`}
+                        className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive">
                         <IcoEliminar />
                       </button>
                     </td>
@@ -492,28 +346,12 @@ const Auditoria = () => {
             </tbody>
           </table>
 
-          {/* Panel edición inline */}
-          {editandoId && (() => {
-            const registro = registros.find((r) => r.id === editandoId);
-            if (!registro) return null;
-            return (
-              <PanelEdicion
-                registro={registro}
-                onGuardar={(datos) => guardarEdicion(editandoId, datos)}
-                onCancelar={cerrarEdicion}
-              />
-            );
+          {editandoId !== null && (() => {
+            const reg = registros.find((r) => r.id === editandoId);
+            if (!reg) return null;
+            return <PanelEdicion registro={reg} usuarios={usuarios} onGuardar={(d) => guardarEdicion(editandoId, d)} onCancelar={cerrarEdicion} />;
           })()}
         </div>
-      </div>
-
-      <div className="flex justify-center mt-8">
-        <button
-          onClick={() => anunciar("Cambios guardados correctamente.")}
-          className={btnAzul + " px-10"}
-        >
-          Guardar
-        </button>
       </div>
     </div>
   );

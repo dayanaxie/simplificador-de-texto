@@ -17,6 +17,7 @@ import AdmiLayout from "./layout/AdminLayout";
 import Perfil from "./pages/Perfil";
 import DiccionarioPersonal from "./pages/DiccionarioPersonal";
 import TextosGuardados from "./pages/TextosGuardados";
+import AdminProfile from "./pages/AdminProfile";
 
 const App = () => (
   <BrowserRouter>
@@ -45,6 +46,7 @@ const App = () => (
         {/* Pantallas con AdminLayout */}
         <Route element={<AdmiLayout />}>
           <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/admin/profile" element={<AdminProfile />} />
         </Route>
 
       </Routes>

@@ -1,27 +1,21 @@
 import { useState, useEffect, useRef } from "react";
-import DialogoConfirmar from "../sections/DialogoConfirmar";
+import { supabase } from "../../../lib/supabaseClient";
+import DialogoConfirmar from "./DialogoConfirmar";
 
-type EstadoReporte = "Pendiente" | "Revisado";
+type EstadoReporte = "pending" | "reviewed";
 
 interface Reporte {
-  id: string;
-  fecha: string;
-  usuario: string;
-  problema: string;
-  estado: EstadoReporte;
+  id: number;
+  user_id: number | null;
+  simplification_id: number | null;
+  description: string;
+  status: EstadoReporte;
+  created_at: string;
+  users?: { email: string; name: string } | null;
+  simplifications?: { original_text: string } | null;
 }
 
-const reportesIniciales: Reporte[] = [
-  { id: "1", fecha: "18/04/2026", usuario: "ana@gmail.com",  problema: "El texto simplificado pierde el contexto principal.", estado: "Pendiente" },
-  { id: "2", fecha: "18/03/2026", usuario: "juan@gmail.com", problema: "Error al exportar el resultado en formato .txt.",       estado: "Revisado"  },
-  { id: "3", fecha: "17/02/2026", usuario: "luis@gmail.com", problema: "La interfaz no responde correctamente en móvil.",       estado: "Pendiente" },
-];
-
-const filtros = [
-  { valor: "Todos",     label: "Pendiente / Revisado" },
-  { valor: "Pendiente", label: "Pendiente" },
-  { valor: "Revisado",  label: "Revisado" },
-];
+interface Usuario { id: number; email: string; name: string; }
 
 const btnAzul =
   "inline-flex items-center justify-center min-h-[44px] px-6 " +
@@ -32,14 +26,16 @@ const btnAzul =
   "transition-opacity duration-150";
 
 const IcoEditar = () => (
-  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
   </svg>
 );
 
 const IcoEliminar = () => (
-  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="3 6 5 6 21 6" />
     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     <path d="M10 11v6M14 11v6" />
@@ -47,15 +43,35 @@ const IcoEliminar = () => (
   </svg>
 );
 
-// Panel edición inline
-interface PanelProps { reporte: Reporte; onGuardar: (d: Partial<Reporte>) => void; onCancelar: () => void; }
+const formatearFecha = (iso: string) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-CR");
+};
 
-const PanelEdicion = ({ reporte, onGuardar, onCancelar }: PanelProps) => {
-  const [usuario, setUsuario]   = useState(reporte.usuario);
-  const [problema, setProblema] = useState(reporte.problema);
-  const [estado, setEstado]     = useState<EstadoReporte>(reporte.estado);
-  const [errores, setErrores]   = useState<{ usuario?: string; problema?: string }>({});
-  const ref = useRef<HTMLInputElement>(null);
+const badgeEstado = (status: EstadoReporte) => (
+  <span className={
+    "inline-block px-2 py-0.5 rounded-full text-xs font-medium " +
+    (status === "reviewed" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800")
+  }>
+    {status === "reviewed" ? "Revisado" : "Pendiente"}
+  </span>
+);
+
+// ── Panel edición inline ──────────────────────────────────────────────────────
+interface PanelProps {
+  reporte: Reporte;
+  usuarios: Usuario[];
+  onGuardar: (datos: { user_id: number | null; description: string; status: EstadoReporte }) => void;
+  onCancelar: () => void;
+}
+
+const PanelEdicion = ({ reporte, usuarios, onGuardar, onCancelar }: PanelProps) => {
+  const [userId, setUserId]       = useState(reporte.user_id?.toString() ?? "");
+  const [description, setDesc]    = useState(reporte.description ?? "");
+  const [status, setStatus]       = useState<EstadoReporte>(reporte.status);
+  const [errores, setErrores]     = useState<{ description?: string }>({});
+  const ref = useRef<HTMLSelectElement>(null);
 
   useEffect(() => { ref.current?.focus(); }, []);
   useEffect(() => {
@@ -65,41 +81,41 @@ const PanelEdicion = ({ reporte, onGuardar, onCancelar }: PanelProps) => {
   }, [onCancelar]);
 
   const guardar = () => {
-    const e: { usuario?: string; problema?: string } = {};
-    if (!usuario.trim()) e.usuario = "El usuario es obligatorio.";
-    if (!problema.trim()) e.problema = "El problema es obligatorio.";
+    const e: { description?: string } = {};
+    if (!description.trim()) e.description = "La descripción es obligatoria.";
     setErrores(e);
-    if (Object.keys(e).length > 0) { ref.current?.focus(); return; }
-    onGuardar({ usuario, problema, estado });
+    if (Object.keys(e).length > 0) return;
+    onGuardar({ user_id: userId ? Number(userId) : null, description, status });
   };
 
   return (
-    <div role="region" aria-label={"Editar reporte del " + reporte.fecha}
+    <div role="region" aria-label={"Editar reporte #" + reporte.id}
       className="absolute left-0 right-0 z-20 bg-white border border-border rounded-lg shadow-xl p-5 mt-1">
       <h3 className="text-base font-bold text-foreground mb-4">Editar reporte</h3>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <div>
-          <label htmlFor="rep-edit-usuario" className="block text-xs font-medium text-foreground mb-1">Usuario <span aria-hidden="true" className="text-destructive">*</span></label>
-          <input id="rep-edit-usuario" ref={ref} type="text" value={usuario}
-            onChange={(e) => setUsuario(e.target.value)} aria-required="true"
-            aria-invalid={errores.usuario ? true : undefined}
-            className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (errores.usuario ? "border-destructive" : "border-border")} />
-          {errores.usuario && <p role="alert" className="mt-1 text-xs text-destructive">{errores.usuario}</p>}
-        </div>
-        <div>
-          <label htmlFor="rep-edit-problema" className="block text-xs font-medium text-foreground mb-1">Problema <span aria-hidden="true" className="text-destructive">*</span></label>
-          <input id="rep-edit-problema" type="text" value={problema}
-            onChange={(e) => setProblema(e.target.value)} aria-required="true"
-            aria-invalid={errores.problema ? true : undefined}
-            className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (errores.problema ? "border-destructive" : "border-border")} />
-          {errores.problema && <p role="alert" className="mt-1 text-xs text-destructive">{errores.problema}</p>}
-        </div>
-        <div>
-          <label htmlFor="rep-edit-estado" className="block text-xs font-medium text-foreground mb-1">Estado</label>
-          <select id="rep-edit-estado" value={estado} onChange={(e) => setEstado(e.target.value as EstadoReporte)}
+          <label htmlFor="rep-edit-user" className="block text-xs font-medium text-foreground mb-1">Usuario</label>
+          <select id="rep-edit-user" ref={ref} value={userId} onChange={(e) => setUserId(e.target.value)}
             className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1">
-            <option value="Pendiente">Pendiente</option>
-            <option value="Revisado">Revisado</option>
+            <option value="">Sin usuario</option>
+            {usuarios.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="rep-edit-desc" className="block text-xs font-medium text-foreground mb-1">
+            Descripción <span aria-hidden="true" className="text-destructive">*</span>
+          </label>
+          <input id="rep-edit-desc" type="text" value={description} onChange={(e) => setDesc(e.target.value)}
+            aria-required="true" aria-invalid={errores.description ? true : undefined}
+            className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (errores.description ? "border-destructive" : "border-border")} />
+          {errores.description && <p role="alert" className="mt-1 text-xs text-destructive">{errores.description}</p>}
+        </div>
+        <div>
+          <label htmlFor="rep-edit-status" className="block text-xs font-medium text-foreground mb-1">Estado</label>
+          <select id="rep-edit-status" value={status} onChange={(e) => setStatus(e.target.value as EstadoReporte)}
+            className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1">
+            <option value="pending">Pendiente</option>
+            <option value="reviewed">Revisado</option>
           </select>
         </div>
       </div>
@@ -114,79 +130,125 @@ const PanelEdicion = ({ reporte, onGuardar, onCancelar }: PanelProps) => {
   );
 };
 
+// ── Componente principal ──────────────────────────────────────────────────────
 const Reportes = () => {
-  const [reportes, setReportes]         = useState<Reporte[]>(reportesIniciales);
-  const [filtroEstado, setFiltroEstado] = useState("Todos");
-  const [editandoId, setEditandoId]     = useState<string | null>(null);
-  const [eliminandoId, setEliminandoId] = useState<string | null>(null);
+  const [reportes, setReportes]         = useState<Reporte[]>([]);
+  const [cargando, setCargando]         = useState(true);
+  const [errorCarga, setErrorCarga]     = useState("");
+  const [usuarios, setUsuarios]         = useState<Usuario[]>([]);
+  const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [editandoId, setEditandoId]     = useState<number | null>(null);
+  const [eliminandoId, setEliminandoId] = useState<number | null>(null);
   const [mostrarForm, setMostrarForm]   = useState(false);
-  const [nuevoUsuario, setNuevoUsuario] = useState("");
-  const [nuevoProblema, setNuevoProblema] = useState("");
-  const [erroresNuevo, setErroresNuevo] = useState<{ usuario?: string; problema?: string }>({});
+  const [nuevoUserId, setNuevoUserId]   = useState("");
+  const [nuevoDesc, setNuevoDesc]       = useState("");
+  const [erroresNuevo, setErroresNuevo] = useState<{ descripcion?: string }>({});
+  const [guardando, setGuardando]       = useState(false);
   const [mensaje, setMensaje]           = useState("");
-  const botonOrigenRef  = useRef<HTMLButtonElement | null>(null);
-  const primerCampoRef  = useRef<HTMLInputElement>(null);
+  const botonOrigenRef = useRef<HTMLButtonElement | null>(null);
+  const primerCampoRef = useRef<HTMLSelectElement>(null);
 
   const anunciar = (t: string) => { setMensaje(t); setTimeout(() => setMensaje(""), 5000); };
 
   useEffect(() => { if (mostrarForm) setTimeout(() => primerCampoRef.current?.focus(), 50); }, [mostrarForm]);
 
-  const filtrados = reportes.filter((r) => filtroEstado === "Todos" || r.estado === filtroEstado);
+  const cargarReportes = async () => {
+    setCargando(true); setErrorCarga("");
+    const { data, error } = await supabase
+      .from("reports")
+      .select("*, users(email, name), simplifications(original_text)")
+      .order("created_at", { ascending: false });
+    if (error) { console.error(error); setErrorCarga("No se pudieron cargar los reportes."); }
+    else setReportes(data ?? []);
+    setCargando(false);
+  };
 
-  const crearReporte = () => {
-    const e: { usuario?: string; problema?: string } = {};
-    if (!nuevoUsuario.trim()) e.usuario = "El usuario es obligatorio.";
-    if (!nuevoProblema.trim()) e.problema = "El problema es obligatorio.";
+  const cargarUsuarios = async () => {
+    const { data } = await supabase.from("users").select("id, email, name").eq("is_active", true).order("name");
+    setUsuarios(data ?? []);
+  };
+
+  useEffect(() => { cargarReportes(); cargarUsuarios(); }, []);
+
+  const filtrados = reportes.filter((r) =>
+    filtroEstado === "todos" || r.status === filtroEstado
+  );
+
+  // ── Crear ─────────────────────────────────────────────────────────────────
+  const crearReporte = async () => {
+    const e: { descripcion?: string } = {};
+    if (!nuevoDesc.trim()) e.descripcion = "La descripción es obligatoria.";
     setErroresNuevo(e);
-    if (Object.keys(e).length > 0) { primerCampoRef.current?.focus(); return; }
-    setReportes((prev) => [{
-      id: crypto.randomUUID(),
-      fecha: new Date().toLocaleDateString("es-CR"),
-      usuario: nuevoUsuario, problema: nuevoProblema, estado: "Pendiente",
-    }, ...prev]);
-    setNuevoUsuario(""); setNuevoProblema(""); setErroresNuevo({}); setMostrarForm(false);
-    anunciar("Reporte creado correctamente.");
+    if (Object.keys(e).length > 0) return;
+
+    setGuardando(true);
+    const payload: Record<string, unknown> = {
+      description: nuevoDesc,
+      status:      "pending",
+      created_at:  new Date().toISOString(),
+    };
+    if (nuevoUserId) payload.user_id = Number(nuevoUserId);
+
+    const { error } = await supabase.from("reports").insert([payload]);
+    if (error) { console.error(error); anunciar("Error al crear el reporte. Revisá la consola."); }
+    else {
+      anunciar("Reporte creado correctamente.");
+      setNuevoUserId(""); setNuevoDesc(""); setErroresNuevo({}); setMostrarForm(false);
+      await cargarReportes();
+    }
+    setGuardando(false);
   };
 
-  const abrirEdicion = (id: string, btn: HTMLButtonElement) => {
-    botonOrigenRef.current = btn; setEditandoId(id); setEliminandoId(null);
-  };
+  // ── Editar ────────────────────────────────────────────────────────────────
+  const abrirEdicion = (id: number, btn: HTMLButtonElement) => { botonOrigenRef.current = btn; setEditandoId(id); setEliminandoId(null); };
   const cerrarEdicion = () => { setEditandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null; };
-  const guardarEdicion = (id: string, datos: Partial<Reporte>) => {
-    setReportes((prev) => prev.map((r) => r.id === id ? { ...r, ...datos } : r));
-    cerrarEdicion(); anunciar("Reporte actualizado correctamente.");
+
+  const guardarEdicion = async (id: number, datos: { user_id: number | null; description: string; status: EstadoReporte }) => {
+    const { error } = await supabase.from("reports").update({
+      user_id:     datos.user_id,
+      description: datos.description,
+      status:      datos.status,
+    }).eq("id", id);
+    if (error) { console.error(error); anunciar("Error al actualizar. Revisá la consola."); }
+    else { anunciar("Reporte actualizado correctamente."); await cargarReportes(); }
+    cerrarEdicion();
   };
 
-  const marcarRevisado = (id: string) => {
-    setReportes((prev) => prev.map((r) => r.id === id ? { ...r, estado: "Revisado" } : r));
-    anunciar("Reporte marcado como revisado.");
+  // ── Marcar revisado rápido ────────────────────────────────────────────────
+  const marcarRevisado = async (id: number) => {
+    const { error } = await supabase.from("reports").update({ status: "reviewed" }).eq("id", id);
+    if (error) { console.error(error); anunciar("Error al actualizar. Revisá la consola."); }
+    else { anunciar("Reporte marcado como revisado."); await cargarReportes(); }
   };
 
-  const abrirEliminar = (id: string, btn: HTMLButtonElement) => {
-    botonOrigenRef.current = btn; setEliminandoId(id); setEditandoId(null);
-  };
-  const confirmarEliminar = () => {
-    setReportes((prev) => prev.filter((r) => r.id !== eliminandoId));
+  // ── Eliminar ──────────────────────────────────────────────────────────────
+  const abrirEliminar = (id: number, btn: HTMLButtonElement) => { botonOrigenRef.current = btn; setEliminandoId(id); setEditandoId(null); };
+
+  const confirmarEliminar = async () => {
+    if (eliminandoId === null) return;
+    const r = reportes.find((r) => r.id === eliminandoId);
+    const { error } = await supabase.from("reports").delete().eq("id", eliminandoId);
+    if (error) { console.error(error); anunciar("Error al eliminar. Revisá la consola."); }
+    else { anunciar(`Reporte de ${r?.users?.name ?? "usuario"} eliminado.`); await cargarReportes(); }
     setEliminandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null;
-    anunciar("Reporte eliminado.");
   };
-  const cancelarEliminar = () => { setEliminandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null; };
 
+  const cancelarEliminar = () => { setEliminandoId(null); botonOrigenRef.current?.focus(); botonOrigenRef.current = null; };
   const reporteAEliminar = reportes.find((r) => r.id === eliminandoId);
 
   return (
     <div>
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{mensaje}</div>
 
-      {eliminandoId && reporteAEliminar && (
+      {eliminandoId !== null && reporteAEliminar && (
         <DialogoConfirmar titulo="Eliminar reporte"
-          mensaje={"¿Estás segura de que querés eliminar el reporte de " + reporteAEliminar.usuario + "? Esta acción no se puede deshacer."}
+          mensaje={`¿Estás segura de que querés eliminar el reporte de ${reporteAEliminar.users?.name ?? "este usuario"}? Esta acción no se puede deshacer.`}
           onConfirmar={confirmarEliminar} onCancelar={cancelarEliminar} />
       )}
 
       <h2 id="h-reportes" className="text-2xl font-bold text-center text-foreground mb-6">Reportes de Problemas</h2>
 
-      {/* Nuevo reporte */}
+      {/* Botón + formulario */}
       <section aria-labelledby="h-nuevo-rep" className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <h3 id="h-nuevo-rep" className="text-sm font-semibold text-foreground">{mostrarForm ? "Nuevo reporte" : ""}</h3>
@@ -194,29 +256,38 @@ const Reportes = () => {
             {mostrarForm ? "Cancelar" : "+ Nuevo reporte"}
           </button>
         </div>
+
         {mostrarForm && (
           <div id="form-nuevo-rep" className="border border-border rounded-lg p-5 bg-page-bg">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label htmlFor="rep-nuevo-usuario" className="block text-xs font-medium text-foreground mb-1">Usuario <span aria-hidden="true" className="text-destructive">*</span></label>
-                <input id="rep-nuevo-usuario" ref={primerCampoRef} type="text" value={nuevoUsuario}
-                  onChange={(e) => setNuevoUsuario(e.target.value)} placeholder="correo@ejemplo.com"
-                  aria-required="true"
-                  className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (erroresNuevo.usuario ? "border-destructive" : "border-border")} />
-                {erroresNuevo.usuario && <p role="alert" className="mt-1 text-xs text-destructive">{erroresNuevo.usuario}</p>}
+                <label htmlFor="rep-nuevo-user" className="block text-xs font-medium text-foreground mb-1">
+                  Usuario <span className="text-muted-foreground">(opcional)</span>
+                </label>
+                <select id="rep-nuevo-user" ref={primerCampoRef} value={nuevoUserId}
+                  onChange={(e) => setNuevoUserId(e.target.value)}
+                  className="w-full px-3 min-h-[44px] border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1">
+                  <option value="">Sin usuario asignado</option>
+                  {usuarios.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+                </select>
               </div>
               <div>
-                <label htmlFor="rep-nuevo-problema" className="block text-xs font-medium text-foreground mb-1">Descripción del problema <span aria-hidden="true" className="text-destructive">*</span></label>
-                <input id="rep-nuevo-problema" type="text" value={nuevoProblema}
-                  onChange={(e) => setNuevoProblema(e.target.value)} placeholder="Describa el problema reportado"
-                  aria-required="true"
-                  className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (erroresNuevo.problema ? "border-destructive" : "border-border")} />
-                {erroresNuevo.problema && <p role="alert" className="mt-1 text-xs text-destructive">{erroresNuevo.problema}</p>}
+                <label htmlFor="rep-nuevo-desc" className="block text-xs font-medium text-foreground mb-1">
+                  Descripción del problema <span aria-hidden="true" className="text-destructive">*</span>
+                </label>
+                <input id="rep-nuevo-desc" type="text" value={nuevoDesc}
+                  onChange={(e) => setNuevoDesc(e.target.value)}
+                  placeholder="Describa el problema reportado"
+                  aria-required="true" aria-invalid={erroresNuevo.descripcion ? true : undefined}
+                  className={"w-full px-3 min-h-[44px] border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))] focus:ring-offset-1 " + (erroresNuevo.descripcion ? "border-destructive" : "border-border")} />
+                {erroresNuevo.descripcion && <p role="alert" className="mt-1 text-xs text-destructive">{erroresNuevo.descripcion}</p>}
               </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={crearReporte} className={btnAzul}>Crear reporte</button>
-              <button onClick={() => { setMostrarForm(false); setNuevoUsuario(""); setNuevoProblema(""); setErroresNuevo({}); }}
+              <button onClick={crearReporte} disabled={guardando} className={btnAzul + (guardando ? " opacity-50" : "")}>
+                {guardando ? "Guardando..." : "Crear reporte"}
+              </button>
+              <button onClick={() => { setMostrarForm(false); setNuevoUserId(""); setNuevoDesc(""); setErroresNuevo({}); }}
                 className="min-h-[44px] px-5 text-sm font-medium border border-border rounded-md text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] focus-visible:ring-offset-2 transition-colors">
                 Descartar
               </button>
@@ -232,45 +303,62 @@ const Reportes = () => {
           <label htmlFor="filtro-rep" className="sr-only">Filtrar por estado del reporte</label>
           <select id="filtro-rep" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}
             className="w-full text-sm bg-transparent text-foreground focus:outline-none">
-            {filtros.map((f) => <option key={f.valor} value={f.valor}>{f.label}</option>)}
+            <option value="todos">Pendiente / Revisado</option>
+            <option value="pending">Pendiente</option>
+            <option value="reviewed">Revisado</option>
           </select>
         </div>
-        <button onClick={() => anunciar("Mostrando " + filtrados.length + " reporte(s).")} className={btnAzul}>Filtrar</button>
+        <button onClick={() => anunciar(`Mostrando ${filtrados.length} reporte(s).`)} className={btnAzul}>Filtrar</button>
       </div>
 
       {/* Tabla */}
       <div className="overflow-x-auto">
         <div className="relative">
           <table className="w-full text-sm text-left" aria-labelledby="h-reportes">
-            <caption className="sr-only">Lista de reportes de problemas con opciones para editar, marcar revisado y eliminar</caption>
+            <caption className="sr-only">Lista de reportes de problemas con opciones para gestionar</caption>
             <thead>
               <tr className="border-b border-border">
                 <th scope="col" className="py-3 pr-3 font-semibold text-foreground">Fecha</th>
                 <th scope="col" className="py-3 pr-3 font-semibold text-foreground">Usuario</th>
-                <th scope="col" className="py-3 pr-3 font-semibold text-foreground">Problema</th>
+                <th scope="col" className="py-3 pr-3 font-semibold text-foreground">Descripción</th>
                 <th scope="col" className="py-3 pr-3 font-semibold text-foreground">Estado</th>
                 <th scope="col" className="py-3 pr-3 font-semibold text-foreground">Editar</th>
                 <th scope="col" className="py-3 font-semibold text-foreground">Eliminar</th>
               </tr>
             </thead>
             <tbody>
-              {filtrados.length === 0 ? (
-                <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">No hay reportes con el estado seleccionado.</td></tr>
+              {cargando ? (
+                <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">Cargando reportes...</td></tr>
+              ) : errorCarga ? (
+                <tr><td colSpan={6} className="py-8 text-center" role="alert">
+                  <span className="text-destructive">{errorCarga}</span>
+                  <button onClick={cargarReportes} className="ml-3 text-primary underline text-sm">Reintentar</button>
+                </td></tr>
+              ) : filtrados.length === 0 ? (
+                <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">
+                  {reportes.length === 0 ? "No hay reportes." : "No hay reportes con el estado seleccionado."}
+                </td></tr>
               ) : (
                 filtrados.map((r) => (
                   <tr key={r.id} className="border-b border-border last:border-0">
-                    <td className="py-3 pr-3 text-foreground whitespace-nowrap">{r.fecha}</td>
+                    <td className="py-3 pr-3 text-foreground whitespace-nowrap">{formatearFecha(r.created_at)}</td>
                     <td className="py-3 pr-3">
-                      <a href={"mailto:" + r.usuario} className="text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] rounded">{r.usuario}</a>
+                      {r.users ? (
+                        <div>
+                          <p className="text-foreground font-medium">{r.users.name}</p>
+                          <p className="text-xs text-muted-foreground">{r.users.email}</p>
+                        </div>
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="py-3 pr-3 text-muted-foreground max-w-[200px] truncate" title={r.problema}>{r.problema}</td>
+                    <td className="py-3 pr-3 text-muted-foreground max-w-[200px]">
+                      <p className="truncate" title={r.description}>{r.description ?? "—"}</p>
+                    </td>
                     <td className="py-3 pr-3">
                       <div className="flex flex-col gap-1">
-                        <span className={"inline-block px-2 py-0.5 rounded-full text-xs font-medium " + (r.estado === "Revisado" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800")}>
-                          {r.estado}
-                        </span>
-                        {r.estado === "Pendiente" && (
-                          <button onClick={() => marcarRevisado(r.id)} aria-label={"Marcar como revisado el reporte de " + r.usuario}
+                        {badgeEstado(r.status)}
+                        {r.status === "pending" && (
+                          <button onClick={() => marcarRevisado(r.id)}
+                            aria-label={`Marcar como revisado el reporte de ${r.users?.name ?? "usuario"}`}
                             className="text-xs text-primary underline text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))] rounded">
                             Marcar revisado
                           </button>
@@ -279,14 +367,14 @@ const Reportes = () => {
                     </td>
                     <td className="py-3 pr-3">
                       <button onClick={(e) => abrirEdicion(r.id, e.currentTarget)}
-                        aria-label={"Editar reporte de " + r.usuario} aria-expanded={editandoId === r.id}
+                        aria-label={`Editar reporte de ${r.users?.name ?? "usuario"}`} aria-expanded={editandoId === r.id}
                         className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary))]">
                         <IcoEditar />
                       </button>
                     </td>
                     <td className="py-3">
                       <button onClick={(e) => abrirEliminar(r.id, e.currentTarget)}
-                        aria-label={"Eliminar reporte de " + r.usuario}
+                        aria-label={`Eliminar reporte de ${r.users?.name ?? "usuario"}`}
                         className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive">
                         <IcoEliminar />
                       </button>
@@ -297,16 +385,12 @@ const Reportes = () => {
             </tbody>
           </table>
 
-          {editandoId && (() => {
+          {editandoId !== null && (() => {
             const rep = reportes.find((r) => r.id === editandoId);
             if (!rep) return null;
-            return <PanelEdicion reporte={rep} onGuardar={(d) => guardarEdicion(editandoId, d)} onCancelar={cerrarEdicion} />;
+            return <PanelEdicion reporte={rep} usuarios={usuarios} onGuardar={(d) => guardarEdicion(editandoId, d)} onCancelar={cerrarEdicion} />;
           })()}
         </div>
-      </div>
-
-      <div className="flex justify-center mt-8">
-        <button onClick={() => anunciar("Cambios guardados correctamente.")} className={btnAzul + " px-10"}>Guardar</button>
       </div>
     </div>
   );
