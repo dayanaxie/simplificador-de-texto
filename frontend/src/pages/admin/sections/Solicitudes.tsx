@@ -318,7 +318,6 @@ const Solicitudes = () => {
         correo: item.email || "",
         motivo: item.reason || "",
         estado: estadoDesdeDB(item.status),
-        password_hash: item.password_hash,
       })
     );
 
@@ -347,18 +346,12 @@ const Solicitudes = () => {
   });
 
   const aceptarSolicitud = async (solicitud: Solicitud) => {
-    if (!solicitud.password_hash) {
-      alert("La solicitud no tiene contraseña guardada.");
-      return;
-    }
-
     const { data: nuevoUsuario, error: userError } = await supabase
       .from("users")
       .insert([
         {
           name: solicitud.nombre,
           email: solicitud.correo,
-          password_hash: solicitud.password_hash,
           is_active: true,
           created_at: new Date().toISOString(),
         },
@@ -387,7 +380,7 @@ const Solicitudes = () => {
 
     const { error: requestError } = await supabase
       .from("access_requests")
-      .update({ status: estadoParaDB("Aceptada") })
+      .update({ status: "approved" })
       .eq("id", solicitud.id);
 
     if (requestError) {

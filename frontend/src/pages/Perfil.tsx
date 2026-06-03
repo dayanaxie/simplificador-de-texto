@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 type ProfileTab = "datos" | "password" | "preferencias";
 
@@ -13,16 +14,77 @@ export default function Perfil() {
   const [isEditing, setIsEditing] = useState(false);
   const [nombre, setNombre] = useState("Nombre de Usuario");
   const [correo, setCorreo] = useState("Correo@gmail.com");
+  const [userId, setUserId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    const getUserData = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (!session?.user) {
+          setError("No hay sesión activa");
+          setLoading(false);
+          return;
+        }
+
+        const { data: userData, error: userError } = await supabase
+          .from("users")
+          .select("id, name, email")
+          .eq("email", session.user.email)
+          .single();
+
+        if (userError || !userData) {
+          console.error("Error getting user data:", userError);
+          setError("Error al obtener datos del usuario");
+          setLoading(false);
+          return;
+        }
+
+        setUserId(userData.id);
+        setNombre(userData.name || "Nombre de Usuario");
+        setCorreo(userData.email || "Correo@gmail.com");
+        setLoading(false);
+      } catch (err) {
+        console.error("Error:", err);
+        setError("Error al cargar los datos");
+        setLoading(false);
+      }
+    };
+
+    getUserData();
+  }, []);
+
+  if (loading) {
+    return (
+      <main className="flex-1 bg-surface min-h-screen flex items-center justify-center">
+        <p className="text-[#1E1E1E]">Cargando...</p>
+      </main>
+    );
+  }
 
   return (
     <main className="flex-1 bg-surface min-h-screen flex items-start justify-center py-10 px-4">
       <div className="w-full max-w-[1008px]">
+        {error && (
+          <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded" role="alert">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="mb-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded" role="alert">
+            {success}
+          </div>
+        )}
+
         <div className="bg-white border border-card-border">
           {/* Inner tab navigation */}
           <div
             className="flex overflow-x-auto border-b"
             style={{
-              backgroundColor: "#002855", // Usa un valor hexadecimal temporalmente
+              backgroundColor: "#002855",
               borderColor: "#002855",
             }}
           >
@@ -55,10 +117,13 @@ export default function Perfil() {
                 setNombre={setNombre}
                 correo={correo}
                 setCorreo={setCorreo}
+                userId={userId}
+                setError={setError}
+                setSuccess={setSuccess}
               />
             )}
-            {activeTab === "password" && <PasswordTab />}
-            {activeTab === "preferencias" && <PreferenciasTab />}
+            {activeTab === "password" && <PasswordTab setError={setError} setSuccess={setSuccess} />}
+            {activeTab === "preferencias" && <PreferenciasTab setError={setError} setSuccess={setSuccess} />}
           </div>
         </div>
       </div>
@@ -73,6 +138,9 @@ function DatosPersonalesTab({
   setNombre,
   correo,
   setCorreo,
+  userId,
+  setError,
+  setSuccess,
 }: {
   isEditing: boolean;
   setIsEditing: (v: boolean) => void;
@@ -80,8 +148,12 @@ function DatosPersonalesTab({
   setNombre: (v: string) => void;
   correo: string;
   setCorreo: (v: string) => void;
+  userId: number | null;
+  setError: (v: string | null) => void;
+  setSuccess: (v: string | null) => void;
 }) {
   const [draft, setDraft] = useState({ nombre, correo });
+  const [saving, setSaving] = useState(false);
 
   const handleEdit = () => {
     setDraft({ nombre, correo });
@@ -92,10 +164,38 @@ function DatosPersonalesTab({
     setIsEditing(false);
   };
 
-  const handleSave = () => {
-    setNombre(draft.nombre);
-    setCorreo(draft.correo);
-    setIsEditing(false);
+  const handleSave = async () => {
+    if (!draft.nombre.trim()) {
+      setError("El nombre no puede estar vacío");
+      return;
+    }
+
+    if (!userId) {
+      setError("Usuario no identificado");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({ name: draft.nombre.trim() })
+        .eq("id", userId);
+
+      if (error) throw error;
+
+      setNombre(draft.nombre.trim());
+      setIsEditing(false);
+      setSuccess("Datos actualizados correctamente");
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (err) {
+      console.error("Error saving:", err);
+      setError("Error al guardar los datos");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (isEditing) {
@@ -128,9 +228,10 @@ function DatosPersonalesTab({
               <input
                 type="email"
                 value={draft.correo}
-                onChange={(e) => setDraft((d) => ({ ...d, correo: e.target.value }))}
-                className="w-full font-inter font-normal text-base text-[#1E1E1E] leading-none outline-none"
+                disabled
+                className="w-full font-inter font-normal text-base text-[#999] leading-none outline-none bg-gray-50 cursor-not-allowed"
               />
+              <p className="text-xs text-[#999] mt-1">El correo no puede ser modificado</p>
             </div>
           </div>
         </div>
@@ -138,16 +239,18 @@ function DatosPersonalesTab({
         <div className="flex items-center justify-end gap-2 mt-8">
           <button
             onClick={handleCancel}
-            className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded"
+            disabled={saving}
+            className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded disabled:opacity-50"
           >
             Cancelar
           </button>
           <button
             onClick={handleSave}
-            className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded"
+            disabled={saving}
+            className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded disabled:opacity-50"
             style={{ backgroundColor: "hsl(var(--navy))" }}
           >
-            Guardar y continuar
+            {saving ? "Guardando..." : "Guardar y continuar"}
           </button>
         </div>
       </div>
@@ -197,15 +300,52 @@ function DatosPersonalesTab({
   );
 }
 
-function PasswordTab() {
+function PasswordTab({ setError, setSuccess }: { setError: (v: string | null) => void; setSuccess: (v: string | null) => void }) {
   const [actual, setActual] = useState("");
   const [nueva, setNueva] = useState("");
   const [confirmar, setConfirmar] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const handleCancel = () => {
     setActual("");
     setNueva("");
     setConfirmar("");
+  };
+
+  const handleSave = async () => {
+    setError(null);
+
+    if (!actual.trim()) {
+      setError("Ingrese su contraseña actual");
+      return;
+    }
+    if (!nueva.trim() || nueva.length < 8) {
+      setError("La nueva contraseña debe tener al menos 8 caracteres");
+      return;
+    }
+    if (nueva !== confirmar) {
+      setError("Las contraseñas no coinciden");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: nueva.trim(),
+      });
+
+      if (error) throw error;
+
+      handleCancel();
+      setSuccess("Contraseña actualizada correctamente");
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (err) {
+      console.error("Error:", err);
+      setError("Error al actualizar la contraseña");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -267,15 +407,18 @@ function PasswordTab() {
       <div className="flex items-center justify-end gap-2 mt-8">
         <button
           onClick={handleCancel}
-          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded"
+          disabled={saving}
+          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded disabled:opacity-50"
         >
           Cancelar
         </button>
         <button
-          className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded"
+          onClick={handleSave}
+          disabled={saving}
+          className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded disabled:opacity-50"
           style={{ backgroundColor: "hsl(var(--navy))" }}
         >
-          Guardar y continuar
+          {saving ? "Guardando..." : "Guardar y continuar"}
         </button>
       </div>
     </div>
@@ -285,12 +428,51 @@ function PasswordTab() {
 type FontSize = "pequeño" | "mediano" | "grande";
 type Contrast = "activar" | "desactivar";
 
-function PreferenciasTab() {
+function PreferenciasTab({ setError, setSuccess }: { setError: (v: string | null) => void; setSuccess: (v: string | null) => void }) {
   const [fontSize, setFontSize] = useState<FontSize>("grande");
   const [contrast, setContrast] = useState<Contrast>("desactivar");
+  const [saving, setSaving] = useState(false);
 
   const previewTextSize =
     fontSize === "pequeño" ? "text-sm" : fontSize === "mediano" ? "text-lg" : "text-2xl";
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.user) {
+        setError("No hay sesión activa");
+        setSaving(false);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("users")
+        .update({
+          font_size: fontSize,
+          contrast_mode: contrast === "activar",
+        })
+        .eq("email", session.user.email);
+
+      if (error) throw error;
+
+      setSuccess("Preferencias guardadas correctamente");
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (err) {
+      console.error("Error:", err);
+      setError("Error al guardar las preferencias");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = () => {
+    setFontSize("grande");
+    setContrast("desactivar");
+  };
 
   return (
     <div>
@@ -369,16 +551,19 @@ function PreferenciasTab() {
 
       <div className="flex items-center justify-end gap-2 mt-8">
         <button
-          onClick={() => { setFontSize("grande"); setContrast("desactivar"); }}
-          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded"
+          onClick={handleReset}
+          disabled={saving}
+          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded disabled:opacity-50"
         >
           Cancelar
         </button>
         <button
-          className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded"
+          onClick={handleSave}
+          disabled={saving}
+          className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded disabled:opacity-50"
           style={{ backgroundColor: "hsl(var(--navy))" }}
         >
-          Guardar y continuar
+          {saving ? "Guardando..." : "Guardar y continuar"}
         </button>
       </div>
     </div>

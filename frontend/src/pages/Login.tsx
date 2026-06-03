@@ -78,60 +78,130 @@ export default function Login() {
 
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from("users")
-      .select(`
-        id,
-        name,
-        email,
-        password_hash,
-        is_active,
-        user_roles (
-          roles (
+    try {
+      // Intentar autenticar con Supabase Auth
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password.trim(),
+      });
+
+      // Si falla, intentar con usuarios antiguos (fallback)
+      if (error) {
+        console.log("Usuario no encontrado en Auth, buscando en tabla users...");
+
+        const { data: legacyUser, error: legacyError } = await supabase
+          .from("users")
+          .select(`
             id,
-            name
+            name,
+            email,
+            password_hash,
+            is_active,
+            user_roles (
+              roles (
+                id,
+                name
+              )
+            )
+          `)
+          .eq("email", email.trim())
+          .eq("password_hash", password.trim())
+          .single();
+
+        if (legacyError || !legacyUser) {
+          setErrorMensaje("Correo o contraseña incorrectos.");
+          setLoading(false);
+          return;
+        }
+
+        if (!legacyUser.is_active) {
+          setErrorMensaje("Su cuenta está inactiva. Contacte al administrador.");
+          setLoading(false);
+          return;
+        }
+
+        // Usuario legado válido
+        const rol = legacyUser.user_roles?.[0]?.roles?.name || "Usuario";
+        localStorage.setItem(
+          "usuario",
+          JSON.stringify({
+            id: legacyUser.id,
+            name: legacyUser.name,
+            email: legacyUser.email,
+            role: rol,
+          })
+        );
+
+        if (rol === "Administrador") {
+          navigate(RUTA_ADMIN);
+        } else {
+          navigate(RUTA_USUARIO);
+        }
+        setLoading(false);
+        return;
+      }
+
+      if (!data.user) {
+        setErrorMensaje("Error al iniciar sesión.");
+        setLoading(false);
+        return;
+      }
+
+      // Obtener datos adicionales del usuario de la tabla 'users'
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select(`
+          id,
+          name,
+          email,
+          is_active,
+          user_roles (
+            roles (
+              id,
+              name
+            )
           )
-        )
-      `)
-      .eq("email", email.trim())
-      .eq("password_hash", password)
-      .maybeSingle();
+        `)
+        .eq("email", data.user.email)
+        .single();
 
-    setLoading(false);
+      if (userError || !userData) {
+        console.error("Error al obtener datos del usuario:", userError);
+        setErrorMensaje("Error al obtener datos del usuario.");
+        setLoading(false);
+        return;
+      }
 
-    if (error) {
-      console.error("Error al iniciar sesión:", error);
-      setErrorMensaje("Ocurrió un error al iniciar sesión.");
-      return;
-    }
+      if (!userData.is_active) {
+        // Cerrar sesión si la cuenta está inactiva
+        await supabase.auth.signOut();
+        setErrorMensaje("Su cuenta está inactiva. Contacte al administrador.");
+        setLoading(false);
+        return;
+      }
 
-    if (!data) {
-      setErrorMensaje("Correo o contraseña incorrectos.");
-      return;
-    }
+      const rol = userData.user_roles?.[0]?.roles?.name || "Usuario";
+      localStorage.setItem(
+        "usuario",
+        JSON.stringify({
+          id: userData.id,
+          name: userData.name,
+          email: userData.email,
+          role: rol,
+        })
+      );
 
-    if (!data.is_active) {
-      setErrorMensaje("Su cuenta está inactiva. Contacte al administrador.");
-      return;
-    }
-
-    const usuario = data as any;
-    const rol = usuario.user_roles?.[0]?.roles?.name || "Usuario";
-
-    localStorage.setItem(
-      "usuario",
-      JSON.stringify({
-        id: usuario.id,
-        name: usuario.name,
-        email: usuario.email,
-        role: rol,
-      })
-    );
-
-    if (rol === "Administrador") {
-      navigate(RUTA_ADMIN);
-    } else {
-      navigate(RUTA_USUARIO);
+      // Redirigir según el rol
+      if (rol === "Administrador") {
+        navigate(RUTA_ADMIN);
+      } else {
+        navigate(RUTA_USUARIO);
+      }
+    } catch (error) {
+      console.error("Error inesperado:", error);
+      setErrorMensaje("Ocurrió un error inesperado.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -177,7 +247,7 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Ingrese su contraseña"
-                  className="w-full h-[40px] pl-4 pr-12 border border-[#D9D9D9] bg-white rounded-lg font-inter font-normal text-base text-[#1E1E1E] placeholder:text-[#1E1E1E]/60 outline-none focus:border-[#002855] transition-colors"
+                  className="w-full px-4 py-3 border border-[#D9D9D9] bg-white font-inter font-normal text-base text-[#1E1E1E] placeholder:text-[#1E1E1E]/60 outline-none focus:border-[#002855] transition-colors"
                 />
 
                 <button

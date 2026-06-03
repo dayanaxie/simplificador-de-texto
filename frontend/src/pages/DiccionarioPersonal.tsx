@@ -1,62 +1,221 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, Plus } from "lucide-react";
+import { supabase } from "../lib/supabaseClient";
 
 interface WordEntry {
   id: number;
-  original: string;
-  version: string;
+  user_id: number;
+  word: string;
+  preferred_replacement: string;
+  keep_original: boolean;
 }
 
-const initialWords: WordEntry[] = [
-  { id: 1, original: "Automóvil", version: "Carro" },
-  { id: 2, original: "email", version: "correo" },
-  { id: 3, original: "teléfono", version: "celular" },
-  { id: 4, original: "adquirir", version: "comprar" },
-];
-
-export default function Index() {
-  const [words, setWords] = useState<WordEntry[]>(initialWords);
+export default function DiccionarioPersonal() {
+  const [words, setWords] = useState<WordEntry[]>([]);
+  const [loading, setLoading] = useState(true);
   const [originalInput, setOriginalInput] = useState("");
   const [versionInput, setVersionInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editOriginal, setEditOriginal] = useState("");
   const [editVersion, setEditVersion] = useState("");
+  const [userId, setUserId] = useState<number | null>(null);
+  const [addingWord, setAddingWord] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const handleAdd = () => {
-    if (!originalInput.trim() || !versionInput.trim()) return;
-    const newEntry: WordEntry = {
-      id: Date.now(),
-      original: originalInput.trim(),
-      version: versionInput.trim(),
+  // Get current user and fetch words
+  useEffect(() => {
+    const getUserAndFetchWords = async () => {
+      try {
+        // Obtener la sesión actual
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          // Obtener el id de la tabla users usando el email
+          const { data: userData, error: userError } = await supabase
+            .from("users")
+            .select("id")
+            .eq("email", session.user.email)
+            .single();
+
+          if (userError || !userData) {
+            console.error("Error getting user data:", userError);
+            setError("Error al obtener datos del usuario");
+            setLoading(false);
+            return;
+          }
+
+          setUserId(userData.id);
+          await fetchWords(userData.id);
+        } else {
+          setError("No hay sesión activa. Por favor inicia sesión.");
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error("Error getting user:", error);
+        setError("Error al obtener la sesión");
+        setLoading(false);
+      }
     };
-    setWords((prev) => [...prev, newEntry]);
-    setOriginalInput("");
-    setVersionInput("");
+
+    getUserAndFetchWords();
+
+    // Escuchar cambios en la autenticación
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        const { data: userData } = await supabase
+          .from("users")
+          .select("id")
+          .eq("email", session.user.email)
+          .single();
+
+        if (userData) {
+          setUserId(userData.id);
+          await fetchWords(userData.id);
+        }
+      } else {
+        setUserId(null);
+        setWords([]);
+      }
+    });
+
+    // Limpiar la suscripción al desmontar
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
+
+  const fetchWords = async (uid: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("personal_dictionary")
+        .select("*")
+        .eq("user_id", uid);
+
+      if (error) throw error;
+      setWords(data || []);
+    } catch (error) {
+      console.error("Error fetching words:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDelete = (id: number) => {
-    setWords((prev) => prev.filter((w) => w.id !== id));
+  const handleAdd = async () => {
+    setError(null);
+    setSuccess(null);
+
+    if (!originalInput.trim()) {
+      setError("Por favor ingrese la palabra original");
+      return;
+    }
+    if (!versionInput.trim()) {
+      setError("Por favor ingrese la versión personalizada");
+      return;
+    }
+    if (!userId) {
+      setError("Usuario no identificado");
+      return;
+    }
+
+    setAddingWord(true);
+
+    try {
+      const { data, error: insertError } = await supabase
+        .from("personal_dictionary")
+        .insert([
+          {
+            user_id: userId,
+            word: originalInput.trim(),
+            preferred_replacement: versionInput.trim(),
+            keep_original: false,
+          },
+        ])
+        .select();
+
+      if (insertError) {
+        console.error("Insert error:", insertError);
+        setError(insertError.message || "Error al agregar la palabra");
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setWords((prev) => [data[0], ...prev]);
+        setOriginalInput("");
+        setVersionInput("");
+        setSuccess(`Palabra "${data[0].word}" agregada correctamente`);
+        setTimeout(() => setSuccess(null), 4000);
+      }
+    } catch (err) {
+      console.error("Unexpected error:", err);
+      setError("Error inesperado al agregar la palabra");
+    } finally {
+      setAddingWord(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    const word = words.find((w) => w.id === id)?.word;
+    try {
+      const { error } = await supabase
+        .from("personal_dictionary")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+      setWords((prev) => prev.filter((w) => w.id !== id));
+      setSuccess(`Palabra "${word}" eliminada correctamente`);
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (error) {
+      console.error("Error deleting word:", error);
+      setError("Error al eliminar la palabra");
+    }
   };
 
   const handleStartEdit = (entry: WordEntry) => {
     setEditingId(entry.id);
-    setEditOriginal(entry.original);
-    setEditVersion(entry.version);
+    setEditOriginal(entry.word);
+    setEditVersion(entry.preferred_replacement);
   };
 
-  const handleSaveEdit = () => {
-    if (!editOriginal.trim() || !editVersion.trim()) return;
-    setWords((prev) =>
-      prev.map((w) =>
-        w.id === editingId
-          ? { ...w, original: editOriginal.trim(), version: editVersion.trim() }
-          : w
-      )
-    );
-    setEditingId(null);
-    setEditOriginal("");
-    setEditVersion("");
+  const handleSaveEdit = async () => {
+    if (!editOriginal.trim() || !editVersion.trim() || editingId === null) return;
+
+    try {
+      const { error } = await supabase
+        .from("personal_dictionary")
+        .update({
+          word: editOriginal.trim(),
+          preferred_replacement: editVersion.trim(),
+        })
+        .eq("id", editingId);
+
+      if (error) throw error;
+      setWords((prev) =>
+        prev.map((w) =>
+          w.id === editingId
+            ? {
+                ...w,
+                word: editOriginal.trim(),
+                preferred_replacement: editVersion.trim(),
+              }
+            : w
+        )
+      );
+      setSuccess(`Palabra "${editOriginal.trim()}" actualizada correctamente`);
+      setTimeout(() => setSuccess(null), 4000);
+      setEditingId(null);
+      setEditOriginal("");
+      setEditVersion("");
+    } catch (error) {
+      console.error("Error updating word:", error);
+      setError("Error al actualizar la palabra");
+    }
   };
 
   const handleCancelEdit = () => {
@@ -67,24 +226,52 @@ export default function Index() {
 
   const filteredWords = words.filter(
     (w) =>
-      w.original.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      w.version.toLowerCase().includes(searchQuery.toLowerCase())
+      w.word.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      w.preferred_replacement.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F5F5F5] flex items-center justify-center">
+        <p className="font-inter text-base text-[#1E1E1E]">Cargando...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex flex-col">
+      {/* Accessible notifications for screen readers */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {error && `Error: ${error}`}
+      </div>
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {success && `Éxito: ${success}`}
+      </div>
 
       {/* Edit Modal */}
       {editingId !== null && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           onClick={handleCancelEdit}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-modal-title"
         >
           <div
             className="bg-white w-full max-w-[460px] mx-4 p-8 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-6">
+            <h2 id="edit-modal-title" className="font-inter font-semibold text-xl text-black mb-6">
               Edite la palabra guardada
             </h2>
 
@@ -154,32 +341,56 @@ export default function Index() {
             Agregar Palabra
           </h2>
 
+          {error && (
+            <div
+              className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+
+          {success && (
+            <div
+              className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded"
+              role="alert"
+            >
+              {success}
+            </div>
+          )}
+
           <div className="flex flex-col md:flex-row gap-4 md:gap-6 mb-6">
             {/* Palabra original */}
             <div className="flex flex-col gap-2 flex-1">
-              <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
+              <label htmlFor="original-input" className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
                 Palabra original
               </label>
               <input
+                id="original-input"
                 type="text"
                 value={originalInput}
                 onChange={(e) => setOriginalInput(e.target.value)}
                 placeholder="Ingrese la palabra que desea sustituir"
                 className="w-full border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] placeholder:text-[#999] outline-none focus:border-[#002855] transition-colors"
+                disabled={addingWord}
+                aria-describedby="original-help"
               />
             </div>
 
             {/* Versión personalizada */}
             <div className="flex flex-col gap-2 flex-1">
-              <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
+              <label htmlFor="version-input" className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
                 Versión personalizada
               </label>
               <input
+                id="version-input"
                 type="text"
                 value={versionInput}
                 onChange={(e) => setVersionInput(e.target.value)}
                 placeholder="Ingrese la versión personalizada"
                 className="w-full border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] placeholder:text-[#999] outline-none focus:border-[#002855] transition-colors"
+                disabled={addingWord}
+                aria-describedby="version-help"
               />
             </div>
 
@@ -187,10 +398,12 @@ export default function Index() {
             <div className="flex items-end">
               <button
                 onClick={handleAdd}
-                className="flex items-center justify-center gap-2 bg-[#002855] text-white font-inter font-medium text-sm px-6 h-[45px] hover:bg-[#003d80] transition-colors whitespace-nowrap"
+                disabled={addingWord}
+                className="flex items-center justify-center gap-2 bg-[#002855] text-white font-inter font-medium text-sm px-6 h-[45px] hover:bg-[#003d80] transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-busy={addingWord}
               >
-                <Plus size={16} />
-                Agregar
+                <Plus size={16} aria-hidden="true" />
+                {addingWord ? "Agregando..." : "Agregar"}
               </button>
             </div>
           </div>
@@ -233,9 +446,9 @@ export default function Index() {
                   className="border-2 border-[#002855] bg-[#F5F5F5] p-4 flex flex-col justify-between min-h-[109px]"
                 >
                   <p className="font-lexend font-light text-[15px] text-black leading-[150%] mb-3">
-                    Palabra original: {entry.original}
+                    Palabra original: {entry.word}
                     <br />
-                    Versión personalizada: {entry.version}
+                    Versión personalizada: {entry.preferred_replacement}
                   </p>
                   <div className="flex gap-2">
                     <button
