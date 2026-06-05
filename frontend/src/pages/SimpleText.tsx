@@ -210,7 +210,7 @@ export default function Index() {
             {
               user_id: usuario.id,
               original_text: result.originalText,
-              simplified_text: result.simplifiedText,
+              simplified_text: finalSimplifiedText,
               status: "completed",
             },
           ])
