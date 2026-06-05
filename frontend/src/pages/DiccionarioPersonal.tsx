@@ -124,7 +124,8 @@ export default function DiccionarioPersonal() {
     }
 
     setAddingWord(true);
-
+    // Comparar si la palabra original es igual a la versión personalizada
+    const isKeepOriginal = originalInput.trim().toLowerCase() === versionInput.trim().toLowerCase();
     try {
       const { data, error: insertError } = await supabase
         .from("personal_dictionary")
@@ -133,7 +134,7 @@ export default function DiccionarioPersonal() {
             user_id: userId,
             word: originalInput.trim(),
             preferred_replacement: versionInput.trim(),
-            keep_original: false,
+            keep_original: isKeepOriginal,
           },
         ])
         .select();
@@ -187,11 +188,13 @@ export default function DiccionarioPersonal() {
     if (!editOriginal.trim() || !editVersion.trim() || editingId === null) return;
 
     try {
+      const isKeepOriginal = editOriginal.trim().toLowerCase() === editVersion.trim().toLowerCase();
       const { error } = await supabase
         .from("personal_dictionary")
         .update({
           word: editOriginal.trim(),
           preferred_replacement: editVersion.trim(),
+          keep_original: isKeepOriginal,
         })
         .eq("id", editingId);
 
@@ -203,6 +206,7 @@ export default function DiccionarioPersonal() {
                 ...w,
                 word: editOriginal.trim(),
                 preferred_replacement: editVersion.trim(),
+                keep_original: isKeepOriginal,
               }
             : w
         )

@@ -91,19 +91,7 @@ export default function Login() {
 
         const { data: legacyUser, error: legacyError } = await supabase
           .from("users")
-          .select(`
-            id,
-            name,
-            email,
-            password_hash,
-            is_active,
-            user_roles (
-              roles (
-                id,
-                name
-              )
-            )
-          `)
+          .select("id, name, email, password_hash, is_active")
           .eq("email", email.trim())
           .eq("password_hash", password.trim())
           .single();
@@ -120,19 +108,27 @@ export default function Login() {
           return;
         }
 
-        // Usuario legado válido
-        const rol = legacyUser.user_roles?.[0]?.roles?.name || "Usuario";
+        // Obtener rol del usuario legado
+        const { data: legacyRoleData } = await supabase
+          .from("user_roles")
+          .select("role_id")
+          .eq("user_id", legacyUser.id)
+          .single();
+
+        const legacyRoleId = legacyRoleData?.role_id;
+        const legacyRol = legacyRoleId === 2 ? "Administrador" : "Usuario";
+
         localStorage.setItem(
           "usuario",
           JSON.stringify({
             id: legacyUser.id,
             name: legacyUser.name,
             email: legacyUser.email,
-            role: rol,
+            role: legacyRol,
           })
         );
 
-        if (rol === "Administrador") {
+        if (legacyRol === "Administrador") {
           navigate(RUTA_ADMIN);
         } else {
           navigate(RUTA_USUARIO);
@@ -150,18 +146,7 @@ export default function Login() {
       // Obtener datos adicionales del usuario de la tabla 'users'
       const { data: userData, error: userError } = await supabase
         .from("users")
-        .select(`
-          id,
-          name,
-          email,
-          is_active,
-          user_roles (
-            roles (
-              id,
-              name
-            )
-          )
-        `)
+        .select("id, name, email, is_active")
         .eq("email", data.user.email)
         .single();
 
@@ -180,7 +165,17 @@ export default function Login() {
         return;
       }
 
-      const rol = userData.user_roles?.[0]?.roles?.name || "Usuario";
+      // Obtener el rol del usuario desde user_roles
+      const { data: userRoleData, error: roleError } = await supabase
+        .from("user_roles")
+        .select("role_id")
+        .eq("user_id", userData.id)
+        .single();
+
+      // Determinar el rol basado en role_id
+      const roleId = userRoleData?.role_id;
+      const rol = roleId === 2 ? "Administrador" : "Usuario";
+
       localStorage.setItem(
         "usuario",
         JSON.stringify({

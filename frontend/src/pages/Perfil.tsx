@@ -179,10 +179,17 @@ function DatosPersonalesTab({
     setError(null);
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        setError("No hay sesión activa");
+        return;
+      }
+      const userEmail = session.user.email;
+
       const { error } = await supabase
         .from("users")
         .update({ name: draft.nombre.trim() })
-        .eq("id", userId);
+        .eq("email", userEmail);
 
       if (error) throw error;
 

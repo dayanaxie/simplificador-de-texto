@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 
 const WORD_LIMIT = 500;
 
+
 function countWords(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
 }
@@ -19,6 +20,14 @@ interface Anuncio {
 interface Categoria {
   id: number;
   name: string;
+}
+
+interface WordEntry {
+  id: number;
+  user_id: number;
+  word: string;
+  preferred_replacement: string;
+  keep_original: boolean;
 }
 
 const formatearFecha = (iso: string) => {
@@ -89,6 +98,45 @@ export default function Index() {
     cargarCategorias();
   }, []);
 
+  const getPersonalDictionary = async (userId: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("personal_dictionary")
+        .select("*")
+        .eq("user_id", userId);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error("Error fetching personal dictionary:", error);
+      return [];
+    }
+  };
+
+  const applyPersonalDictionary = (text: string, dictionary: WordEntry[]): string => {
+    if (!text || !dictionary || dictionary.length === 0) return text;
+
+    let resultText = text;
+    
+    // Ordenar el diccionario de palabras más largas a más cortas para evitar reemplazos parciales
+    const sortedDictionary = [...dictionary].sort((a, b) => b.word.length - a.word.length);
+    
+    for (const entry of sortedDictionary) {
+      // Si keep_original es true, no reemplazar
+      if (entry.keep_original) continue;
+      
+      const regex = new RegExp(`\\b${escapeRegex(entry.word)}\\b`, 'gi');
+      resultText = resultText.replace(regex, entry.preferred_replacement);
+    }
+    
+    return resultText;
+  };
+
+  // Función auxiliar para escapar caracteres especiales en regex
+  const escapeRegex = (string: string): string => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  };
+
   const handlePaste = useCallback(async () => {
     setErrorMessage("");
     setSuccessMessage("");
@@ -137,6 +185,8 @@ export default function Index() {
       setLastSimplificationId(null);
 
       const result = await simplifyText(inputText.trim());
+      let finalSimplifiedText = result.simplifiedText;
+
 
       setSimplifiedText(result.simplifiedText);
 
@@ -144,6 +194,16 @@ export default function Index() {
       const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
 
       if (usuario?.id) {
+        // Obtener el diccionario personal del usuario
+        const personalDict = await getPersonalDictionary(usuario.id);
+        
+        // Aplicar las sustituciones del diccionario personal
+        if (personalDict.length > 0) {
+          finalSimplifiedText = applyPersonalDictionary(finalSimplifiedText, personalDict);
+          console.log(`Aplicadas ${personalDict.length} reglas del diccionario personal`);
+        }
+        setSimplifiedText(finalSimplifiedText);
+
         const { data, error } = await supabase
           .from("simplifications")
           .insert([
