@@ -4,7 +4,6 @@ import { supabase } from "../lib/supabaseClient";
 
 const WORD_LIMIT = 500;
 
-
 function countWords(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
 }
@@ -22,19 +21,41 @@ interface Categoria {
   name: string;
 }
 
-interface WordEntry {
-  id: number;
-  user_id: number;
-  word: string;
-  preferred_replacement: string;
-  keep_original: boolean;
-}
-
 const formatearFecha = (iso: string) => {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 };
+
+// ── Generación de id desde el código (algunas tablas no autogeneran el id) ──
+async function siguienteId(tabla: string): Promise<number> {
+  const { data, error } = await supabase
+    .from(tabla)
+    .select("id")
+    .order("id", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const maxId = data && data.length > 0 ? Number(data[0].id) : 0;
+  return maxId + 1;
+}
+
+async function insertarFila(
+  tabla: string,
+  fila: Record<string, unknown>,
+  intentos = 5
+): Promise<void> {
+  const primer = await supabase.from(tabla).insert(fila);
+  if (!primer.error) return;
+  if (primer.error.code !== "23502") throw primer.error;
+
+  for (let i = 0; i < intentos; i++) {
+    const id = await siguienteId(tabla);
+    const { error } = await supabase.from(tabla).insert({ ...fila, id });
+    if (!error) return;
+    if (error.code !== "23505") throw error;
+  }
+  throw new Error(`No se pudo generar un id único para ${tabla}.`);
+}
 
 export default function Index() {
   const [inputText, setInputText] = useState("");
@@ -60,6 +81,7 @@ export default function Index() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [rating, setRating] = useState(0);
 
   const inputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -97,45 +119,6 @@ export default function Index() {
     cargarAnuncios();
     cargarCategorias();
   }, []);
-
-  const getPersonalDictionary = async (userId: number) => {
-    try {
-      const { data, error } = await supabase
-        .from("personal_dictionary")
-        .select("*")
-        .eq("user_id", userId);
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error("Error fetching personal dictionary:", error);
-      return [];
-    }
-  };
-
-  const applyPersonalDictionary = (text: string, dictionary: WordEntry[]): string => {
-    if (!text || !dictionary || dictionary.length === 0) return text;
-
-    let resultText = text;
-    
-    // Ordenar el diccionario de palabras más largas a más cortas para evitar reemplazos parciales
-    const sortedDictionary = [...dictionary].sort((a, b) => b.word.length - a.word.length);
-    
-    for (const entry of sortedDictionary) {
-      // Si keep_original es true, no reemplazar
-      if (entry.keep_original) continue;
-      
-      const regex = new RegExp(`\\b${escapeRegex(entry.word)}\\b`, 'gi');
-      resultText = resultText.replace(regex, entry.preferred_replacement);
-    }
-    
-    return resultText;
-  };
-
-  // Función auxiliar para escapar caracteres especiales en regex
-  const escapeRegex = (string: string): string => {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  };
 
   const handlePaste = useCallback(async () => {
     setErrorMessage("");
@@ -185,8 +168,6 @@ export default function Index() {
       setLastSimplificationId(null);
 
       const result = await simplifyText(inputText.trim());
-      let finalSimplifiedText = result.simplifiedText;
-
 
       setSimplifiedText(result.simplifiedText);
 
@@ -194,23 +175,13 @@ export default function Index() {
       const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
 
       if (usuario?.id) {
-        // Obtener el diccionario personal del usuario
-        const personalDict = await getPersonalDictionary(usuario.id);
-        
-        // Aplicar las sustituciones del diccionario personal
-        if (personalDict.length > 0) {
-          finalSimplifiedText = applyPersonalDictionary(finalSimplifiedText, personalDict);
-          console.log(`Aplicadas ${personalDict.length} reglas del diccionario personal`);
-        }
-        setSimplifiedText(finalSimplifiedText);
-
         const { data, error } = await supabase
           .from("simplifications")
           .insert([
             {
               user_id: usuario.id,
               original_text: result.originalText,
-              simplified_text: finalSimplifiedText,
+              simplified_text: result.simplifiedText,
               status: "completed",
             },
           ])
@@ -280,6 +251,7 @@ export default function Index() {
     setSaveTitle("");
     setSelectedCategoryId("");
     setNewCategoryName("");
+    setRating(0);
     setIsSaveModalOpen(true);
   }, [simplifiedText]);
 
@@ -288,6 +260,7 @@ export default function Index() {
     setSaveTitle("");
     setSelectedCategoryId("");
     setNewCategoryName("");
+    setRating(0);
     setSaveError("");
   }, []);
 
@@ -309,6 +282,11 @@ export default function Index() {
 
     if (selectedCategoryId === "new" && !newCategoryName.trim()) {
       setSaveError("Debe escribir el nombre de la nueva categoría.");
+      return;
+    }
+
+    if (rating < 1 || rating > 5) {
+      setSaveError("Debe seleccionar una valoración.");
       return;
     }
 
@@ -411,23 +389,31 @@ export default function Index() {
         categoryId = Number(selectedCategoryId);
       }
 
-      const { error: relationError } = await supabase
-        .from("simplification_categories")
-        .insert([
-          {
-            saved_simplification_id: savedData.id,
-            category_id: categoryId,
-          },
-        ]);
+      await insertarFila("simplification_categories", {
+        saved_simplification_id: savedData.id,
+        category_id: categoryId,
+      });
 
-      if (relationError) {
-        throw relationError;
-      }
+      // Versión 1: snapshot inicial del texto simplificado (aparece en Historial).
+      await insertarFila("simplification_versions", {
+        saved_simplification_id: savedData.id,
+        content: simplifiedText,
+        created_at: new Date().toISOString(),
+      });
+
+      await insertarFila("ratings", {
+        saved_simplification_id: savedData.id,
+        user_id: usuario.id,
+        score: rating,
+        comment: null,
+        created_at: new Date().toISOString(),
+      });
 
       setIsSaveModalOpen(false);
       setSaveTitle("");
       setSelectedCategoryId("");
       setNewCategoryName("");
+      setRating(0);
       setSaveError("");
       setSuccessMessage("Simplificación guardada correctamente.");
     } catch (error) {
@@ -443,6 +429,7 @@ export default function Index() {
     newCategoryName,
     lastSimplificationId,
     inputText,
+    rating,
   ]);
 
   const handleOpenReportModal = useCallback(() => {
@@ -503,6 +490,7 @@ export default function Index() {
     setSaveTitle("");
     setSelectedCategoryId("");
     setNewCategoryName("");
+    setRating(0);
     setSaveError("");
   }, []);
 
@@ -765,6 +753,37 @@ export default function Index() {
                 </div>
               )}
 
+
+              <div className="flex flex-col gap-1.5">
+                <label className="font-inter font-normal text-base text-[#1E1E1E]">
+                  Valoración
+                </label>
+
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => {
+                        setRating(star);
+                        setSaveError("");
+                      }}
+                      className="text-3xl leading-none transition-colors focus:outline-none"
+                      aria-label={`Seleccionar ${star} estrella${star > 1 ? "s" : ""}`}
+                      style={{ color: star <= rating ? "#f5b301" : "#cbd5e1" }}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+
+                {rating > 0 && (
+                  <span className="text-sm text-gray-600 font-inter">
+                    {rating} de 5 estrellas
+                  </span>
+                )}
+              </div>
+
               {saveError && (
                 <p className="text-sm text-red-600 font-inter">{saveError}</p>
               )}
@@ -786,6 +805,7 @@ export default function Index() {
                   isSaving ||
                   !saveTitle.trim() ||
                   !selectedCategoryId ||
+                  rating === 0 ||
                   (selectedCategoryId === "new" && !newCategoryName.trim())
                 }
                 className="px-6 py-2 font-inter font-medium text-sm text-white bg-[#002855] hover:bg-[#003d80] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
