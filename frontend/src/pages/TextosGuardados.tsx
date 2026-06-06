@@ -1236,7 +1236,7 @@ function ValoracionesTab({
         .from("ratings")
         .select("id, score, created_at")
         .eq("saved_simplification_id", texto.id)
-        .order("id", { ascending: true });
+        .order("created_at", { ascending: true });
       if (error) throw error;
       const filas = (data ?? []).map((r: any, i: number) => ({
         id: r.id,

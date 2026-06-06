@@ -394,19 +394,11 @@ export default function Index() {
         category_id: categoryId,
       });
 
-      // Versión 1: snapshot inicial del texto simplificado (aparece en Historial).
-      await insertarFila("simplification_versions", {
-        saved_simplification_id: savedData.id,
-        content: simplifiedText,
-        created_at: new Date().toISOString(),
-      });
-
       await insertarFila("ratings", {
         saved_simplification_id: savedData.id,
         user_id: usuario.id,
         score: rating,
         comment: null,
-        created_at: new Date().toISOString(),
       });
 
       setIsSaveModalOpen(false);
