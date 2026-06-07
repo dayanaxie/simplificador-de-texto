@@ -119,7 +119,6 @@ export default function AdminProfile() {
             )}
             {activeTab === "password" && (
               <PasswordTab
-                userId={userId}
                 email={email}
                 anunciar={anunciar}
               />
@@ -265,67 +264,166 @@ function DatosTab({
 
 // ── Tab: Cambiar contraseña ───────────────────────────────────────────────────
 function PasswordTab({
-  userId,
   email,
   anunciar,
 }: {
-  userId: number | null;
   email: string;
   anunciar: (msg: string, error?: boolean) => void;
 }) {
   const [actual, setActual]       = useState("");
   const [nueva, setNueva]         = useState("");
   const [confirmar, setConfirmar] = useState("");
+
+  const [mostrarActual, setMostrarActual]       = useState(false);
+  const [mostrarNueva, setMostrarNueva]         = useState(false);
+  const [mostrarConfirmar, setMostrarConfirmar] = useState(false);
+
   const [guardando, setGuardando] = useState(false);
   const [errores, setErrores]     = useState<Record<string, string>>({});
 
+  const limpiarFormulario = () => {
+    setActual("");
+    setNueva("");
+    setConfirmar("");
+    setMostrarActual(false);
+    setMostrarNueva(false);
+    setMostrarConfirmar(false);
+    setErrores({});
+  };
+
   const handleCancel = () => {
-    setActual(""); setNueva(""); setConfirmar(""); setErrores({});
+    limpiarFormulario();
   };
 
   const handleSave = async () => {
-    const e: Record<string, string> = {};
-    if (!actual.trim())      e.actual    = "Ingresá tu contraseña actual.";
-    if (!nueva.trim())       e.nueva     = "Ingresá la nueva contraseña.";
-    if (nueva.length < 8)    e.nueva     = "Mínimo 8 caracteres.";
-    if (nueva !== confirmar) e.confirmar = "Las contraseñas no coinciden.";
-    setErrores(e);
-    if (Object.keys(e).length > 0) return;
+    const nuevosErrores: Record<string, string> = {};
 
-    setGuardando(true);
+    /*
+     * No se usa trim() en las contraseñas porque un espacio
+     * podría formar parte de una contraseña válida.
+     */
+    if (!actual) {
+      nuevosErrores.actual = "Ingrese su contraseña actual.";
+    }
 
-    // Verificar que la contraseña actual sea correcta consultando la tabla users
-    const { data: userCheck, error: checkError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("id", userId)
-      .eq("password_hash", actual)
-      .maybeSingle();
+    if (!nueva) {
+      nuevosErrores.nueva = "Ingrese la nueva contraseña.";
+    } else if (nueva.length < 8) {
+      nuevosErrores.nueva = "La nueva contraseña debe tener al menos 8 caracteres.";
+    }
 
-    if (checkError || !userCheck) {
-      setErrores({ actual: "La contraseña actual es incorrecta." });
-      setGuardando(false);
+    if (!confirmar) {
+      nuevosErrores.confirmar = "Confirme la nueva contraseña.";
+    } else if (nueva !== confirmar) {
+      nuevosErrores.confirmar = "Las contraseñas no coinciden.";
+    }
+
+    if (actual && nueva && actual === nueva) {
+      nuevosErrores.nueva = "La nueva contraseña debe ser diferente de la actual.";
+    }
+
+    if (!email) {
+      nuevosErrores.actual = "No se encontró el correo del administrador.";
+    }
+
+    setErrores(nuevosErrores);
+
+    if (Object.keys(nuevosErrores).length > 0) {
       return;
     }
 
-    // Actualizar la contraseña en la tabla users
-    const { error: updateError } = await supabase
-      .from("users")
-      .update({ password_hash: nueva })
-      .eq("id", userId);
+    setGuardando(true);
 
-    if (updateError) {
-      console.error(updateError);
-      anunciar("Error al actualizar la contraseña.", true);
-    } else {
-      setActual(""); setNueva(""); setConfirmar(""); setErrores({});
+    try {
+      /*
+       * Primero se valida realmente la contraseña actual.
+       * Si la contraseña está mala, signInWithPassword devuelve error
+       * y no se permite continuar con el cambio.
+       */
+      const { error: loginError } = await supabase.auth.signInWithPassword({
+        email,
+        password: actual,
+      });
+
+      if (loginError) {
+        setErrores({
+          actual: "La contraseña actual es incorrecta.",
+        });
+        anunciar("La contraseña actual es incorrecta.", true);
+        return;
+      }
+
+      /*
+       * Después de validar la contraseña actual, Supabase deja una sesión
+       * activa para este usuario. Por eso updateUser cambia la contraseña
+       * del administrador autenticado.
+       */
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: nueva,
+      });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      limpiarFormulario();
       anunciar("Contraseña actualizada correctamente.");
+    } catch (err: unknown) {
+      console.error("Error al actualizar la contraseña:", err);
+
+      const authError = err as {
+        code?: string;
+        message?: string;
+        status?: number;
+      };
+
+      const code = authError.code?.toLowerCase() ?? "";
+      const message = authError.message?.toLowerCase() ?? "";
+
+      if (
+        code === "invalid_credentials" ||
+        message.includes("invalid login") ||
+        message.includes("invalid credentials") ||
+        message.includes("invalid password")
+      ) {
+        setErrores({
+          actual: "La contraseña actual es incorrecta.",
+        });
+        anunciar("La contraseña actual es incorrecta.", true);
+      } else if (
+        code === "same_password" ||
+        message.includes("same password")
+      ) {
+        setErrores({
+          nueva: "La nueva contraseña debe ser diferente de la actual.",
+        });
+        anunciar("La nueva contraseña debe ser diferente de la actual.", true);
+      } else if (
+        code === "weak_password" ||
+        message.includes("weak password") ||
+        message.includes("password should") ||
+        message.includes("password must")
+      ) {
+        setErrores({
+          nueva: "La nueva contraseña no cumple con los requisitos de seguridad.",
+        });
+        anunciar("La nueva contraseña no cumple con los requisitos de seguridad.", true);
+      } else if (
+        code === "session_not_found" ||
+        message.includes("session") ||
+        authError.status === 401
+      ) {
+        anunciar("La sesión venció. Inicie sesión nuevamente.", true);
+      } else {
+        anunciar("Error al actualizar la contraseña.", true);
+      }
+    } finally {
+      setGuardando(false);
     }
-    setGuardando(false);
   };
 
   const inputCls = (campo: string) =>
-    "border bg-white px-4 py-3 " +
+    "relative border bg-white px-4 py-3 pr-24 " +
     (errores[campo] ? "border-red-400" : "border-input-border");
 
   return (
@@ -333,48 +431,171 @@ function PasswordTab({
       <h2 className="font-lexend font-semibold text-2xl md:text-[32px] leading-[150%] text-black mb-2">
         Cambiar Contraseña
       </h2>
+
       <p className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%] mb-8 max-w-[600px]">
         Ingrese su contraseña actual y luego la nueva contraseña dos veces para confirmar.
       </p>
 
-      <div className="flex flex-col gap-6 max-w-[317px]">
-        {[
-          { id: "pass-actual",    label: "Contraseña actual",          val: actual,    set: setActual,    campo: "actual" },
-          { id: "pass-nueva",     label: "Nueva contraseña",           val: nueva,     set: setNueva,     campo: "nueva" },
-          { id: "pass-confirmar", label: "Confirmar nueva contraseña", val: confirmar, set: setConfirmar, campo: "confirmar" },
-        ].map(({ id, label, val, set, campo }) => (
-          <div key={id} className="flex flex-col gap-2">
-            <label htmlFor={id} className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
-              {label}
-            </label>
-            <div className={inputCls(campo)}>
-              <input
-                id={id}
-                type="password"
-                value={val}
-                onChange={(e) => {
-                  set(e.target.value);
-                  setErrores((prev) => ({ ...prev, [campo]: "" }));
-                }}
-                placeholder="••••••••••••••"
-                className="w-full font-inter font-normal text-base text-[#1E1E1E] leading-none outline-none bg-transparent placeholder:text-[#1E1E1E]"
-              />
-            </div>
-            {errores[campo] && (
-              <p role="alert" className="text-xs text-red-600 font-inter">{errores[campo]}</p>
-            )}
+      <div className="flex flex-col gap-6 max-w-[420px]">
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="pass-actual"
+            className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]"
+          >
+            Contraseña actual
+          </label>
+
+          <div className={inputCls("actual")}>
+            <input
+              id="pass-actual"
+              type={mostrarActual ? "text" : "password"}
+              value={actual}
+              onChange={(e) => {
+                setActual(e.target.value);
+                setErrores((prev) => ({ ...prev, actual: "" }));
+              }}
+              placeholder="Ingrese su contraseña actual"
+              autoComplete="current-password"
+              disabled={guardando}
+              className="w-full font-inter font-normal text-base text-[#1E1E1E] leading-none outline-none bg-transparent placeholder:text-[#1E1E1E]/60 disabled:opacity-50"
+            />
+
+            <button
+              type="button"
+              onClick={() => setMostrarActual((valor) => !valor)}
+              disabled={guardando}
+              aria-label={
+                mostrarActual
+                  ? "Ocultar contraseña actual"
+                  : "Mostrar contraseña actual"
+              }
+              aria-pressed={mostrarActual}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-inter font-medium text-[#002855] hover:underline disabled:opacity-50"
+            >
+              {mostrarActual ? "Ocultar" : "Mostrar"}
+            </button>
           </div>
-        ))}
+
+          {errores.actual && (
+            <p role="alert" className="text-xs text-red-600 font-inter">
+              {errores.actual}
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="pass-nueva"
+            className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]"
+          >
+            Nueva contraseña
+          </label>
+
+          <div className={inputCls("nueva")}>
+            <input
+              id="pass-nueva"
+              type={mostrarNueva ? "text" : "password"}
+              value={nueva}
+              onChange={(e) => {
+                setNueva(e.target.value);
+                setErrores((prev) => ({ ...prev, nueva: "" }));
+              }}
+              placeholder="Ingrese la nueva contraseña"
+              autoComplete="new-password"
+              minLength={8}
+              disabled={guardando}
+              className="w-full font-inter font-normal text-base text-[#1E1E1E] leading-none outline-none bg-transparent placeholder:text-[#1E1E1E]/60 disabled:opacity-50"
+            />
+
+            <button
+              type="button"
+              onClick={() => setMostrarNueva((valor) => !valor)}
+              disabled={guardando}
+              aria-label={
+                mostrarNueva
+                  ? "Ocultar nueva contraseña"
+                  : "Mostrar nueva contraseña"
+              }
+              aria-pressed={mostrarNueva}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-inter font-medium text-[#002855] hover:underline disabled:opacity-50"
+            >
+              {mostrarNueva ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
+
+          {errores.nueva && (
+            <p role="alert" className="text-xs text-red-600 font-inter">
+              {errores.nueva}
+            </p>
+          )}
+
+          {!errores.nueva && (
+            <p className="text-xs text-[#666] font-inter">
+              Debe contener al menos 8 caracteres.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="pass-confirmar"
+            className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]"
+          >
+            Confirmar nueva contraseña
+          </label>
+
+          <div className={inputCls("confirmar")}>
+            <input
+              id="pass-confirmar"
+              type={mostrarConfirmar ? "text" : "password"}
+              value={confirmar}
+              onChange={(e) => {
+                setConfirmar(e.target.value);
+                setErrores((prev) => ({ ...prev, confirmar: "" }));
+              }}
+              placeholder="Vuelva a ingresar la nueva contraseña"
+              autoComplete="new-password"
+              minLength={8}
+              disabled={guardando}
+              className="w-full font-inter font-normal text-base text-[#1E1E1E] leading-none outline-none bg-transparent placeholder:text-[#1E1E1E]/60 disabled:opacity-50"
+            />
+
+            <button
+              type="button"
+              onClick={() => setMostrarConfirmar((valor) => !valor)}
+              disabled={guardando}
+              aria-label={
+                mostrarConfirmar
+                  ? "Ocultar confirmación de contraseña"
+                  : "Mostrar confirmación de contraseña"
+              }
+              aria-pressed={mostrarConfirmar}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-inter font-medium text-[#002855] hover:underline disabled:opacity-50"
+            >
+              {mostrarConfirmar ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
+
+          {errores.confirmar && (
+            <p role="alert" className="text-xs text-red-600 font-inter">
+              {errores.confirmar}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-end gap-2 mt-8">
         <button
+          type="button"
           onClick={handleCancel}
-          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded"
+          disabled={guardando}
+          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded disabled:opacity-50"
         >
           Cancelar
         </button>
+
         <button
+          type="button"
           onClick={handleSave}
           disabled={guardando}
           className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors whitespace-nowrap rounded disabled:opacity-50"
