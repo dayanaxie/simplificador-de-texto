@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { simplifyText } from "../lib/simplifierApi";
 import { supabase } from "../lib/supabaseClient";
+import BotonAyuda from "../components/BotonAyuda";
 
 const WORD_LIMIT = 500;
 
@@ -857,6 +858,8 @@ export default function Index() {
           </div>
         </div>
       )}
+      <BotonAyuda modulo="Simplificación" />
     </div>
   );
+  
 }

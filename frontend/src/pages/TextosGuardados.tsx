@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { simplifyText } from "../lib/simplifierApi";
 import { supabase } from "../lib/supabaseClient";
+import BotonAyuda from "../components/BotonAyuda";
 
 type TextosTab = "guardados" | "edicion" | "historial" | "valoraciones";
 
@@ -562,6 +563,7 @@ function TextosGuardadosTab({
           )}
         </tbody>
       </table>
+      <BotonAyuda modulo="Textos guardados" />
     </div>
   );
 }
@@ -914,6 +916,7 @@ function EdicionTab({
           </div>
         </div>
       )}
+      <BotonAyuda modulo="Textos Guardados" />
     </div>
   );
 }
@@ -1211,6 +1214,7 @@ function HistorialTab({
           </div>
         </div>
       )}
+      <BotonAyuda modulo="Textos guardados" />
     </div>
   );
 }
@@ -1310,6 +1314,7 @@ function ValoracionesTab({
           Regresar
         </button>
       </div>
+      <BotonAyuda modulo="Textos guardados" />
     </div>
   );
 }

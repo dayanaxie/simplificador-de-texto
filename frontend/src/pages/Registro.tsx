@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
+import BotonAyuda from "../components/BotonAyuda";
 
 export default function RegistroPage() {
   const navigate = useNavigate();
@@ -341,6 +342,7 @@ function FormField({
         className="w-full border border-[#D9D9D9] bg-white px-4 py-3 text-[#1E1E1E] text-base font-normal placeholder:text-[#1E1E1E] focus:outline-none focus:border-[#0D2149] transition-colors"
         required
       />
+      <BotonAyuda modulo="Registro" />
     </div>
   );
 }

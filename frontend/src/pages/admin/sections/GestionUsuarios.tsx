@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import DialogoConfirmar from "./DialogoConfirmar";
+import BotonAyuda from "../../../components/BotonAyuda";
 
 type Rol = "Usuario" | "Administrador";
 type Estado = "Activo" | "Inactivo";
@@ -866,6 +867,7 @@ const GestionUsuarios = () => {
           Actualizar métricas
         </button>
       </div>
+      <BotonAyuda modulo="Usuarios" />
     </div>
   );
 };

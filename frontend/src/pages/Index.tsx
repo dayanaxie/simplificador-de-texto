@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import BotonAyuda from "../components/BotonAyuda";
 
 export default function Index() {
   const [exampleFromServer, setExampleFromServer] = useState("");

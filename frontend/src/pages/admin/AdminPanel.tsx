@@ -6,7 +6,8 @@ import Metricas from "./sections/Metricas";
 import Glosario from "./sections/Glosario";
 import Auditoria from "./sections/Auditoria";
 import Solicitudes from "./sections/Solicitudes";
-import Reportes from "./sections/Reportes";       
+import Reportes from "./sections/Reportes"; 
+import GuiasAyuda from "./sections/GuiasAyuda";      
 
 type SeccionAdmin =
   | "usuarios"
@@ -16,7 +17,8 @@ type SeccionAdmin =
   | "glosario"
   | "metricas"
   | "reportes"
-  | "solicitudes";
+  | "solicitudes"
+  | "guias";
 
 const secciones: { id: SeccionAdmin; label: string }[] = [
   { id: "anuncios",      label: "Anuncios" },
@@ -27,6 +29,7 @@ const secciones: { id: SeccionAdmin; label: string }[] = [
   { id: "reportes",      label: "Reportes" },
   { id: "solicitudes",   label: "Solicitudes" },
   { id: "usuarios",      label: "Usuarios" },
+  { id: "guias", label: "Guías de ayuda" },
 ];
 
 const SeccionPendiente = ({ titulo }: { titulo: string }) => (
@@ -48,6 +51,7 @@ const AdminPanel = () => {
       case "auditoria":     return <Auditoria />;
       case "reportes":      return <Reportes />;
       case "solicitudes":   return <Solicitudes />;
+      case "guias": return <GuiasAyuda />;
     }
   };
 

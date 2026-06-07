@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../../../lib/supabaseClient";
+import BotonAyuda from "../../../components/BotonAyuda";
 
 // La tabla system_config usa key/value — estas son las claves esperadas
 const CLAVES = {
@@ -260,6 +261,7 @@ const Configuracion = () => {
           </button>
         </div>
       </div>
+      <BotonAyuda modulo="Configuración" />
     </div>
   );
 };

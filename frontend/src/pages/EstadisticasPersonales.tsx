@@ -1,3 +1,4 @@
+import BotonAyuda from "../components/BotonAyuda";
 const BarChartSharpIcon = () => (
   <svg
     width="68"

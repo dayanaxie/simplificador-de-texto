@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import DialogoConfirmar from "./DialogoConfirmar";
+import BotonAyuda from "../../../components/BotonAyuda";
 
 type EstadoReporte = "pending" | "reviewed";
 
@@ -392,6 +393,7 @@ const Reportes = () => {
           })()}
         </div>
       </div>
+      <BotonAyuda modulo="Reportes" />
     </div>
   );
 };

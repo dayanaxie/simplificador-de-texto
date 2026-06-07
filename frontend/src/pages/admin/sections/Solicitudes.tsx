@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import DialogoConfirmar from "./DialogoConfirmar";
+import BotonAyuda from "../../../components/BotonAyuda";
 
 type EstadoSolicitud = "Pendiente" | "Aceptada" | "Denegada";
 
@@ -967,6 +968,7 @@ const Solicitudes = () => {
           Actualizar
         </button>
       </div>
+      <BotonAyuda modulo="Solicitudes" />
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "../lib/supabaseClient";
+import BotonAyuda from "../components/BotonAyuda";
 
 type ProfileTab = "datos" | "password" | "preferencias";
 
@@ -181,6 +182,7 @@ export default function Perfil() {
             )}
           </div>
         </div>
+        <BotonAyuda modulo="Perfil" />
       </div>
     </main>
   );
@@ -430,6 +432,7 @@ function DatosPersonalesTab({
           Editar
         </button>
       </div>
+      <BotonAyuda modulo="Perfil" />
     </div>
   );
 }
@@ -765,6 +768,7 @@ function PasswordTab({
           </button>
         </div>
       </form>
+      <BotonAyuda modulo="Perfil" />
     </div>
   );
 }
@@ -1001,6 +1005,7 @@ function PreferenciasTab({
           {saving ? "Guardando..." : "Guardar y continuar"}
         </button>
       </div>
+      <BotonAyuda modulo="Perfil" />
     </div>
   );
 }

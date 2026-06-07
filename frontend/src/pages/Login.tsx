@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
+import BotonAyuda from "../components/BotonAyuda";
 
 const EyeOffIcon = () => (
   <svg
@@ -292,6 +293,7 @@ export default function Login() {
           </div>
         </form>
       </div>
+      <BotonAyuda modulo="Login" />
     </div>
   );
 }

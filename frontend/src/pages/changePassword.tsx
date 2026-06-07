@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import BotonAyuda from "../components/BotonAyuda";
 
 export default function Index() {
   const [password, setPassword] = useState("");

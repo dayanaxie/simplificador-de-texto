@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import DialogoConfirmar from "./DialogoConfirmar";
+import BotonAyuda from "../../../components/BotonAyuda";
 
 interface Anuncio {
   id: number;
@@ -297,6 +298,7 @@ const Anuncios = () => {
           </tbody>
         </table>
       </div>
+      <BotonAyuda modulo="Anuncios" />
     </div>
   );
 };

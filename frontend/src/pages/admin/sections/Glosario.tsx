@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import DialogoConfirmar from "./DialogoConfirmar";
+import BotonAyuda from "../../../components/BotonAyuda";
 
 interface Entrada {
   id: number;
@@ -304,6 +305,7 @@ const Glosario = () => {
           })()}
         </div>
       </div>
+      <BotonAyuda modulo="Glosario" />
     </div>
   );
 };

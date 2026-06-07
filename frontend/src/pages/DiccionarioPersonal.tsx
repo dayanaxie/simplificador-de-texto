@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Search, Plus } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import BotonAyuda from "../components/BotonAyuda";
 
 interface WordEntry {
   id: number;
@@ -474,6 +475,7 @@ export default function DiccionarioPersonal() {
           )}
         </div>
       </main>
+      <BotonAyuda modulo="Diccionario personal" />
     </div>
   );
 }

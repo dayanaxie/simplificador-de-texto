@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import BotonAyuda from "../components/BotonAyuda";
 
 export default function RestablecerContrasena() {
   const [email, setEmail] = useState("");
