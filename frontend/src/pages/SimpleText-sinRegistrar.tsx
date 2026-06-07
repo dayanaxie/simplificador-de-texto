@@ -3,7 +3,7 @@ import { simplifyText } from "../lib/simplifierApi";
 import { supabase } from "../lib/supabaseClient";
 import BotonAyuda from "../components/BotonAyuda";
 
-const WORD_LIMIT = 500;
+const WORD_LIMIT_DEFAULT = 500;
 
 function countWords(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
@@ -30,12 +30,13 @@ export default function Index() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
+  const [wordLimit, setWordLimit] = useState(WORD_LIMIT_DEFAULT);
 
   const inputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const wordCount = countWords(inputText);
-  const isOverLimit = wordCount > WORD_LIMIT;
+  const isOverLimit = wordCount > wordLimit;
 
   // ── Carga de anuncios vigentes ────────────────────────────────────────────
   useEffect(() => {
@@ -49,7 +50,17 @@ export default function Index() {
         .order("start_date", { ascending: false });
       if (!error) setAnuncios(data ?? []);
     };
+    const cargarLimite = async () => {
+      const { data } = await supabase
+        .from("system_config")
+        .select("value")
+        .eq("key", "limite_palabras")
+        .single();
+      if (data?.value) setWordLimit(Number(data.value));
+    };
+
     cargarAnuncios();
+    cargarLimite();
   }, []);
 
   const handlePaste = useCallback(async () => {
@@ -145,7 +156,7 @@ export default function Index() {
             </h1>
             <div className="flex flex-col gap-2">
               <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
-                Ingrese un texto menor a {WORD_LIMIT} palabras
+                Ingrese un texto menor a {wordLimit} palabras
               </label>
               <textarea
                 ref={inputTextareaRef}
@@ -156,7 +167,7 @@ export default function Index() {
               />
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-1">
                 <span className={`font-lexend font-normal text-[13px] leading-[100%] text-right sm:text-left ${isOverLimit ? "text-red-600" : "text-black"}`}>
-                  {wordCount}/{WORD_LIMIT} palabras
+                  {wordCount}/{wordLimit} palabras
                 </span>
                 <div className="flex gap-3 justify-end">
                   <button type="button" onClick={handlePaste}
@@ -170,7 +181,7 @@ export default function Index() {
                   </button>
                 </div>
               </div>
-              {isOverLimit && <p className="text-sm text-red-600 font-inter">El texto supera el límite permitido de {WORD_LIMIT} palabras.</p>}
+              {isOverLimit && <p className="text-sm text-red-600 font-inter">El texto supera el límite permitido de {wordLimit} palabras.</p>}
               {errorMessage && <p className="text-sm text-red-600 font-inter">{errorMessage}</p>}
               {successMessage && <p className="text-sm text-green-600 font-inter">{successMessage}</p>}
             </div>
