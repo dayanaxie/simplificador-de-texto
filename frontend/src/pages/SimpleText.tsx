@@ -35,7 +35,9 @@ async function siguienteId(tabla: string): Promise<number> {
     .select("id")
     .order("id", { ascending: false })
     .limit(1);
+
   if (error) throw error;
+
   const maxId = data && data.length > 0 ? Number(data[0].id) : 0;
   return maxId + 1;
 }
@@ -46,15 +48,20 @@ async function insertarFila(
   intentos = 5
 ): Promise<void> {
   const primer = await supabase.from(tabla).insert(fila);
+
   if (!primer.error) return;
+
   if (primer.error.code !== "23502") throw primer.error;
 
   for (let i = 0; i < intentos; i++) {
     const id = await siguienteId(tabla);
     const { error } = await supabase.from(tabla).insert({ ...fila, id });
+
     if (!error) return;
+
     if (error.code !== "23505") throw error;
   }
+
   throw new Error(`No se pudo generar un id único para ${tabla}.`);
 }
 
@@ -84,6 +91,8 @@ export default function Index() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [rating, setRating] = useState(0);
+
+  const [isExporting, setIsExporting] = useState(false);
 
   const inputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -124,6 +133,7 @@ export default function Index() {
         .select("value")
         .eq("key", "limite_palabras")
         .single();
+
       if (data?.value) setWordLimit(Number(data.value));
     };
 
@@ -131,6 +141,35 @@ export default function Index() {
     cargarCategorias();
     cargarLimite();
   }, []);
+
+  const obtenerOCrearSimplificationId = useCallback(
+    async (userId: number): Promise<number> => {
+      if (lastSimplificationId) {
+        return lastSimplificationId;
+      }
+
+      const { data, error } = await supabase
+        .from("simplifications")
+        .insert([
+          {
+            user_id: userId,
+            original_text: inputText,
+            simplified_text: simplifiedText,
+            status: "completed",
+          },
+        ])
+        .select("id")
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      setLastSimplificationId(data.id);
+      return data.id;
+    },
+    [lastSimplificationId, inputText, simplifiedText]
+  );
 
   const handlePaste = useCallback(async () => {
     setErrorMessage("");
@@ -316,30 +355,7 @@ export default function Index() {
       setErrorMessage("");
       setSuccessMessage("");
 
-      let simplificationId = lastSimplificationId;
-
-      if (!simplificationId) {
-        const { data: simplificationData, error: simplificationError } =
-          await supabase
-            .from("simplifications")
-            .insert([
-              {
-                user_id: usuario.id,
-                original_text: inputText,
-                simplified_text: simplifiedText,
-                status: "completed",
-              },
-            ])
-            .select("id")
-            .single();
-
-        if (simplificationError) {
-          throw simplificationError;
-        }
-
-        simplificationId = simplificationData.id;
-        setLastSimplificationId(simplificationId);
-      }
+      const simplificationId = await obtenerOCrearSimplificationId(usuario.id);
 
       const { data: savedData, error: savedError } = await supabase
         .from("saved_simplifications")
@@ -431,9 +447,8 @@ export default function Index() {
     saveTitle,
     selectedCategoryId,
     newCategoryName,
-    lastSimplificationId,
-    inputText,
     rating,
+    obtenerOCrearSimplificationId,
   ]);
 
   const handleOpenReportModal = useCallback(() => {
@@ -467,19 +482,56 @@ export default function Index() {
     setErrorMessage("");
   }, [inputText, simplifiedText, reportDescription]);
 
-  const handleExport = useCallback(() => {
-    if (!simplifiedText) return;
+  const handleExport = useCallback(async () => {
+    if (!simplifiedText.trim() || isExporting) return;
 
-    const blob = new Blob([simplifiedText], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const usuarioGuardado = localStorage.getItem("usuario");
+    const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
 
-    a.href = url;
-    a.download = "texto-simplificado.txt";
-    a.click();
+    if (!usuario?.id) {
+      setErrorMessage("No se encontró el usuario activo.");
+      setSuccessMessage("");
+      return;
+    }
 
-    URL.revokeObjectURL(url);
-  }, [simplifiedText]);
+    try {
+      setIsExporting(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const simplificationId = await obtenerOCrearSimplificationId(usuario.id);
+
+      const ahora = new Date().toISOString();
+
+      const filePath = `texto-simplificado-${ahora
+        .slice(0, 19)
+        .replace(/[:T]/g, "-")}.txt`;
+
+      await insertarFila("exports", {
+        simplification_id: simplificationId,
+        file_path: filePath,
+        created_at: ahora,
+      });
+
+      const blob = new Blob([simplifiedText], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+
+      a.href = url;
+      a.download = filePath;
+      a.click();
+
+      URL.revokeObjectURL(url);
+
+      setSuccessMessage("Texto exportado y registrado correctamente.");
+    } catch (error) {
+      console.error("Error exportando texto:", error);
+      setErrorMessage("No se pudo registrar la exportación del texto.");
+      setSuccessMessage("");
+    } finally {
+      setIsExporting(false);
+    }
+  }, [simplifiedText, isExporting, obtenerOCrearSimplificationId]);
 
   const handleNewSimplification = useCallback(() => {
     setInputText("");
@@ -496,6 +548,7 @@ export default function Index() {
     setNewCategoryName("");
     setRating(0);
     setSaveError("");
+    setIsExporting(false);
   }, []);
 
   return (
@@ -598,7 +651,7 @@ export default function Index() {
               <button
                 type="button"
                 onClick={handleOpenReportModal}
-                disabled={!simplifiedText}
+                disabled={!simplifiedText.trim()}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 Reportar resultado
@@ -607,7 +660,7 @@ export default function Index() {
               <button
                 type="button"
                 onClick={handleCopyResult}
-                disabled={!simplifiedText}
+                disabled={!simplifiedText.trim()}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 Copiar texto
@@ -616,7 +669,7 @@ export default function Index() {
               <button
                 type="button"
                 onClick={handleOpenSaveModal}
-                disabled={!simplifiedText}
+                disabled={!simplifiedText.trim()}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 Guardar simplificación
@@ -625,10 +678,10 @@ export default function Index() {
               <button
                 type="button"
                 onClick={handleExport}
-                disabled={!simplifiedText}
+                disabled={!simplifiedText.trim() || isExporting}
                 className="bg-[#002855] text-white font-inter font-medium text-sm leading-[150%] px-4 h-[38px] flex items-center justify-center hover:bg-[#003d80] active:bg-[#001a3d] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
-                Exportar texto
+                {isExporting ? "Exportando..." : "Exportar texto"}
               </button>
 
               <button
@@ -757,7 +810,6 @@ export default function Index() {
                 </div>
               )}
 
-
               <div className="flex flex-col gap-1.5">
                 <label className="font-inter font-normal text-base text-[#1E1E1E]">
                   Valoración
@@ -773,7 +825,9 @@ export default function Index() {
                         setSaveError("");
                       }}
                       className="text-3xl leading-none transition-colors focus:outline-none"
-                      aria-label={`Seleccionar ${star} estrella${star > 1 ? "s" : ""}`}
+                      aria-label={`Seleccionar ${star} estrella${
+                        star > 1 ? "s" : ""
+                      }`}
                       style={{ color: star <= rating ? "#f5b301" : "#cbd5e1" }}
                     >
                       ★
@@ -869,8 +923,8 @@ export default function Index() {
           </div>
         </div>
       )}
+
       <BotonAyuda modulo="Simplificación" />
     </div>
   );
-  
 }
