@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
+import { loadAndApplyUserPreferences } from "../utils/userPreferences";
 import BotonAyuda from "../components/BotonAyuda";
 
 const EyeOffIcon = () => (
@@ -128,7 +129,7 @@ export default function Login() {
             role: legacyRol,
           })
         );
-
+        await loadAndApplyUserPreferences(legacyUser.id);
         if (legacyRol === "Administrador") {
           navigate(RUTA_ADMIN);
         } else {
@@ -186,7 +187,7 @@ export default function Login() {
           role: rol,
         })
       );
-
+      await loadAndApplyUserPreferences(userData.id);
       // Redirigir según el rol
       if (rol === "Administrador") {
         navigate(RUTA_ADMIN);

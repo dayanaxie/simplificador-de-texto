@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
+import { applyDefaultPreferences } from "../utils/userPreferences";
 
 const navItems = [
   { label: "Panel de simplificación", path: "/simplifyText" },
@@ -46,6 +47,7 @@ export default function NavbarRegister() {
     setCerrando(true);
 
     const { error } = await supabase.auth.signOut();
+    applyDefaultPreferences();
 
     if (error) {
       console.error("Error al cerrar sesión:", error.message);

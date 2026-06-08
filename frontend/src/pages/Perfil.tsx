@@ -15,6 +15,15 @@ const profileTabs: { id: ProfileTab; label: string }[] = [
   { id: "preferencias", label: "Preferencias de lectura" },
 ];
 
+const isValidFontSize = (value: unknown): value is FontSize => {
+  return value === "pequeño" || value === "mediano" || value === "grande";
+};
+
+const applyPreferences = (fontSize: FontSize, highContrast: boolean) => {
+  document.documentElement.dataset.fontSize = fontSize;
+  document.documentElement.dataset.highContrast = String(highContrast);
+};
+
 export default function Perfil() {
   const [activeTab, setActiveTab] = useState<ProfileTab>("datos");
 
@@ -72,6 +81,26 @@ export default function Perfil() {
         setUserId(userData.id);
         setNombre(userData.name || "Nombre de Usuario");
         setCorreo(userData.email || session.user.email);
+
+        const { data: preferencesData, error: preferencesError } =
+          await supabase
+            .from("user_preferences")
+            .select("font_size, high_contrast")
+            .eq("user_id", userData.id)
+            .maybeSingle();
+
+        if (preferencesError) {
+          console.warn("No se pudieron cargar las preferencias:", preferencesError);
+          return;
+        }
+
+        const savedFontSize = isValidFontSize(preferencesData?.font_size)
+          ? preferencesData.font_size
+          : "mediano";
+
+        const savedHighContrast = preferencesData?.high_contrast ?? false;
+
+        applyPreferences(savedFontSize, savedHighContrast);
       } catch (err) {
         console.error("Error al obtener los datos:", err);
         setError("Error al obtener los datos del usuario");
@@ -121,7 +150,6 @@ export default function Perfil() {
         )}
 
         <div className="bg-white border border-card-border">
-          {/* Navegación de pestañas */}
           <div
             className="flex overflow-x-auto border-b"
             style={{
@@ -152,7 +180,6 @@ export default function Perfil() {
             })}
           </div>
 
-          {/* Contenido de las pestañas */}
           <div className="p-6 md:p-10 min-h-[400px]">
             {activeTab === "datos" && (
               <DatosPersonalesTab
@@ -168,14 +195,12 @@ export default function Perfil() {
             )}
 
             {activeTab === "password" && (
-              <PasswordTab
-                setError={setError}
-                setSuccess={setSuccess}
-              />
+              <PasswordTab setError={setError} setSuccess={setSuccess} />
             )}
 
             {activeTab === "preferencias" && (
               <PreferenciasTab
+                userId={userId}
                 setError={setError}
                 setSuccess={setSuccess}
               />
@@ -501,16 +526,13 @@ function PasswordTab({
     }
 
     if (actual === nueva) {
-      setError(
-        "La nueva contraseña debe ser diferente de la contraseña actual"
-      );
+      setError("La nueva contraseña debe ser diferente de la contraseña actual");
       return;
     }
 
     setSaving(true);
 
     try {
-      // Obtener al usuario autenticado.
       const {
         data: { user },
         error: userError,
@@ -526,26 +548,19 @@ function PasswordTab({
         return;
       }
 
-      /*
-      * Verificar realmente la contraseña actual.
-      * Si es incorrecta, Supabase devuelve un error y no continúa.
-      */
-      const { error: loginError } =
-        await supabase.auth.signInWithPassword({
-          email: user.email,
-          password: actual,
-        });
+      const { error: loginError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: actual,
+      });
 
       if (loginError) {
         setError("La contraseña actual es incorrecta");
         return;
       }
 
-      // Cambiar la contraseña solamente después de validarla.
-      const { error: passwordError } =
-        await supabase.auth.updateUser({
-          password: nueva,
-        });
+      const { error: passwordError } = await supabase.auth.updateUser({
+        password: nueva,
+      });
 
       if (passwordError) {
         throw passwordError;
@@ -576,22 +591,15 @@ function PasswordTab({
       const code = authError.code?.toLowerCase() ?? "";
       const message = authError.message?.toLowerCase() ?? "";
 
-      if (
-        code === "same_password" ||
-        message.includes("same password")
-      ) {
-        setError(
-          "La nueva contraseña debe ser diferente de la contraseña actual"
-        );
+      if (code === "same_password" || message.includes("same password")) {
+        setError("La nueva contraseña debe ser diferente de la contraseña actual");
       } else if (
         code === "weak_password" ||
         message.includes("weak password") ||
         message.includes("password should") ||
         message.includes("password must")
       ) {
-        setError(
-          "La nueva contraseña no cumple con los requisitos de seguridad"
-        );
+        setError("La nueva contraseña no cumple con los requisitos de seguridad");
       } else if (
         code === "session_not_found" ||
         message.includes("session") ||
@@ -599,10 +607,7 @@ function PasswordTab({
       ) {
         setError("La sesión venció. Inicie sesión nuevamente");
       } else {
-        setError(
-          authError.message ||
-            "No se pudo actualizar la contraseña"
-        );
+        setError(authError.message || "No se pudo actualizar la contraseña");
       }
     } finally {
       setSaving(false);
@@ -616,8 +621,8 @@ function PasswordTab({
       </h2>
 
       <p className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%] mb-8 max-w-[600px]">
-        Ingrese su contraseña actual y luego escriba la nueva contraseña
-        dos veces para confirmarla.
+        Ingrese su contraseña actual y luego escriba la nueva contraseña dos
+        veces para confirmarla.
       </p>
 
       <form onSubmit={handleSave} noValidate>
@@ -778,65 +783,162 @@ function PasswordTab({
 ========================================================= */
 
 function PreferenciasTab({
+  userId,
   setError,
   setSuccess,
 }: {
+  userId: number | null;
   setError: MessageSetter;
   setSuccess: MessageSetter;
 }) {
-  const [fontSize, setFontSize] =
-    useState<FontSize>("grande");
+  const DEFAULT_FONT_SIZE: FontSize = "mediano";
+  const DEFAULT_HIGH_CONTRAST = false;
 
-  const [contrast, setContrast] =
-    useState<Contrast>("desactivar");
+  const [fontSize, setFontSize] = useState<FontSize>(DEFAULT_FONT_SIZE);
+  const [contrast, setContrast] = useState<Contrast>("desactivar");
+
+  const [savedFontSize, setSavedFontSize] =
+    useState<FontSize>(DEFAULT_FONT_SIZE);
+  const [savedHighContrast, setSavedHighContrast] =
+    useState(DEFAULT_HIGH_CONTRAST);
 
   const [saving, setSaving] = useState(false);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
 
-  const previewTextSize =
+  const highContrastPreview = contrast === "activar";
+
+  const previewFontSize =
     fontSize === "pequeño"
-      ? "text-sm"
+      ? "14px"
       : fontSize === "mediano"
-        ? "text-lg"
-        : "text-2xl";
+        ? "18px"
+        : "24px";
 
-  const handleSave = async () => {
+  const previewTitleSize =
+    fontSize === "pequeño"
+      ? "18px"
+      : fontSize === "mediano"
+        ? "22px"
+        : "28px";
+
+  const previewPanelStyle = {
+    backgroundColor: highContrastPreview ? "#000000" : "#F5F5F5",
+    color: highContrastPreview ? "#FFFFFF" : "#1E1E1E",
+    borderColor: highContrastPreview ? "#FFFFFF" : "#D9D9D9",
+  };
+
+  const previewCardStyle = {
+    backgroundColor: highContrastPreview ? "#000000" : "#FFFFFF",
+    color: highContrastPreview ? "#FFFFFF" : "#1E1E1E",
+    borderColor: highContrastPreview ? "#FFFFFF" : "#D9D9D9",
+  };
+
+  const previewButtonStyle = {
+    backgroundColor: highContrastPreview ? "#FFEA00" : "#002855",
+    color: highContrastPreview ? "#000000" : "#FFFFFF",
+    borderColor: highContrastPreview ? "#FFEA00" : "#002855",
+  };
+
+  const previewInputStyle = {
+    backgroundColor: highContrastPreview ? "#000000" : "#FFFFFF",
+    color: highContrastPreview ? "#FFFFFF" : "#1E1E1E",
+    borderColor: highContrastPreview ? "#FFFFFF" : "#D9D9D9",
+  };
+
+  const previewLinkStyle = {
+    color: highContrastPreview ? "#FFEA00" : "#002855",
+    textDecoration: highContrastPreview ? "underline" : "none",
+    textUnderlineOffset: "3px",
+  };
+
+  useEffect(() => {
+    const loadPreferences = async () => {
+      if (userId === null) {
+        setLoadingPreferences(false);
+        return;
+      }
+
+      setLoadingPreferences(true);
+      setError(null);
+
+      try {
+        const { data, error } = await supabase
+          .from("user_preferences")
+          .select("font_size, high_contrast")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        const currentFontSize = isValidFontSize(data?.font_size)
+          ? data.font_size
+          : DEFAULT_FONT_SIZE;
+
+        const currentHighContrast =
+          data?.high_contrast ?? DEFAULT_HIGH_CONTRAST;
+
+        setFontSize(currentFontSize);
+        setContrast(currentHighContrast ? "activar" : "desactivar");
+
+        setSavedFontSize(currentFontSize);
+        setSavedHighContrast(currentHighContrast);
+
+        applyPreferences(currentFontSize, currentHighContrast);
+      } catch (err) {
+        console.error("Error al cargar preferencias:", err);
+        setError("Error al cargar las preferencias");
+      } finally {
+        setLoadingPreferences(false);
+      }
+    };
+
+    void loadPreferences();
+  }, [userId, setError]);
+
+  const savePreferences = async (
+    newFontSize: FontSize,
+    newHighContrast: boolean,
+    successMessage: string
+  ) => {
     setSaving(true);
     setError(null);
     setSuccess(null);
 
+    if (userId === null) {
+      setError("Usuario no identificado");
+      setSaving(false);
+      return;
+    }
+
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
+      const { error: upsertError } = await supabase
+        .from("user_preferences")
+        .upsert(
+          {
+            user_id: userId,
+            font_size: newFontSize,
+            high_contrast: newHighContrast,
+          },
+          {
+            onConflict: "user_id",
+          }
+        );
 
-      if (userError) {
-        throw userError;
+      if (upsertError) {
+        throw upsertError;
       }
 
-      if (!user) {
-        setError("No hay una sesión activa");
-        return;
-      }
+      setFontSize(newFontSize);
+      setContrast(newHighContrast ? "activar" : "desactivar");
 
-      if (!user.email) {
-        setError("La cuenta no tiene un correo electrónico asociado");
-        return;
-      }
+      setSavedFontSize(newFontSize);
+      setSavedHighContrast(newHighContrast);
 
-      const { error: updateError } = await supabase
-        .from("users")
-        .update({
-          font_size: fontSize,
-          contrast_mode: contrast === "activar",
-        })
-        .eq("email", user.email);
+      applyPreferences(newFontSize, newHighContrast);
 
-      if (updateError) {
-        throw updateError;
-      }
-
-      setSuccess("Preferencias guardadas correctamente");
+      setSuccess(successMessage);
 
       window.setTimeout(() => {
         setSuccess(null);
@@ -849,12 +951,67 @@ function PreferenciasTab({
     }
   };
 
-  const handleReset = () => {
-    setFontSize("grande");
-    setContrast("desactivar");
+  const handleSave = async () => {
+    await savePreferences(
+      fontSize,
+      contrast === "activar",
+      "Preferencias guardadas correctamente"
+    );
+  };
+
+  const handleCancel = () => {
+    setFontSize(savedFontSize);
+    setContrast(savedHighContrast ? "activar" : "desactivar");
+    applyPreferences(savedFontSize, savedHighContrast);
     setError(null);
     setSuccess(null);
   };
+
+const handleRestoreDefaults = async () => {
+  setSaving(true);
+  setError(null);
+  setSuccess(null);
+
+  if (userId === null) {
+    setError("Usuario no identificado");
+    setSaving(false);
+    return;
+  }
+
+  try {
+    const { error: deleteError } = await supabase
+      .from("user_preferences")
+      .delete()
+      .eq("user_id", userId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    setFontSize("mediano");
+    setContrast("desactivar");
+
+    setSavedFontSize("mediano");
+    setSavedHighContrast(false);
+
+    applyPreferences("mediano", false);
+
+    setSuccess("Preferencias restablecidas correctamente");
+
+    window.setTimeout(() => {
+      setSuccess(null);
+    }, 4000);
+  } catch (err) {
+    console.error("Error al restablecer las preferencias:", err);
+    setError("Error al restablecer las preferencias");
+  } finally {
+    setSaving(false);
+  }
+};
+
+  if (loadingPreferences) {
+    return <p className="text-[#1E1E1E]">Cargando preferencias...</p>;
+  }
 
   return (
     <div>
@@ -863,7 +1020,6 @@ function PreferenciasTab({
       </h2>
 
       <div className="flex flex-col md:flex-row gap-8 md:gap-12">
-        {/* Controles */}
         <div className="flex flex-col gap-6 flex-1">
           <div className="flex flex-col gap-3">
             <span className="font-inter font-medium text-base text-[#1E1E1E]">
@@ -871,18 +1027,9 @@ function PreferenciasTab({
             </span>
 
             <div className="flex gap-0">
-              {(
-                [
-                  "pequeño",
-                  "mediano",
-                  "grande",
-                ] as FontSize[]
-              ).map((size) => {
+              {(["pequeño", "mediano", "grande"] as FontSize[]).map((size) => {
                 const active = fontSize === size;
-
-                const label =
-                  size.charAt(0).toUpperCase() +
-                  size.slice(1);
+                const label = size.charAt(0).toUpperCase() + size.slice(1);
 
                 return (
                   <button
@@ -890,6 +1037,7 @@ function PreferenciasTab({
                     type="button"
                     onClick={() => setFontSize(size)}
                     disabled={saving}
+                    aria-pressed={active}
                     className={`h-10 px-5 font-inter font-normal text-base border border-[#D9D9D9] transition-colors disabled:opacity-50 ${
                       active
                         ? "text-white"
@@ -898,10 +1046,8 @@ function PreferenciasTab({
                     style={
                       active
                         ? {
-                            backgroundColor:
-                              "hsl(var(--navy))",
-                            borderColor:
-                              "hsl(var(--navy))",
+                            backgroundColor: "hsl(var(--navy))",
+                            borderColor: "hsl(var(--navy))",
                           }
                         : {}
                     }
@@ -919,17 +1065,9 @@ function PreferenciasTab({
             </span>
 
             <div className="flex gap-0">
-              {(
-                [
-                  "activar",
-                  "desactivar",
-                ] as Contrast[]
-              ).map((option) => {
+              {(["activar", "desactivar"] as Contrast[]).map((option) => {
                 const active = contrast === option;
-
-                const label =
-                  option.charAt(0).toUpperCase() +
-                  option.slice(1);
+                const label = option.charAt(0).toUpperCase() + option.slice(1);
 
                 return (
                   <button
@@ -937,6 +1075,7 @@ function PreferenciasTab({
                     type="button"
                     onClick={() => setContrast(option)}
                     disabled={saving}
+                    aria-pressed={active}
                     className={`h-10 px-5 font-inter font-normal text-base border border-[#D9D9D9] transition-colors disabled:opacity-50 ${
                       active
                         ? "text-white"
@@ -945,10 +1084,8 @@ function PreferenciasTab({
                     style={
                       active
                         ? {
-                            backgroundColor:
-                              "hsl(var(--navy))",
-                            borderColor:
-                              "hsl(var(--navy))",
+                            backgroundColor: "hsl(var(--navy))",
+                            borderColor: "hsl(var(--navy))",
                           }
                         : {}
                     }
@@ -961,36 +1098,102 @@ function PreferenciasTab({
           </div>
         </div>
 
-        {/* Vista previa */}
-        <div className="flex-1 max-w-[320px] md:max-w-[360px]">
+        <div className="flex-1 max-w-[360px]">
           <div
-            className={`w-full h-full min-h-[220px] flex items-center justify-center p-6 text-center ${
-              contrast === "activar"
-                ? "bg-black"
-                : "bg-[#F5F5F5]"
-            }`}
+            className="w-full min-h-[260px] flex flex-col justify-center p-6 border text-left"
+            style={previewPanelStyle}
+            aria-live="polite"
           >
             <p
-              className={`font-lexend font-bold leading-snug ${previewTextSize} ${
-                contrast === "activar"
-                  ? "text-white"
-                  : "text-black"
-              }`}
+              className="font-inter font-semibold mb-3"
+              style={{
+                fontSize: "14px",
+                color: highContrastPreview ? "#FFEA00" : "#002855",
+              }}
             >
-              El texto se verá así. 1234567890! @#%&amp;*()_+-=
+              Vista previa{" "}
+              {highContrastPreview
+                ? "con alto contraste"
+                : "sin alto contraste"}
             </p>
+
+            <div className="border p-5" style={previewCardStyle}>
+              <h3
+                className="font-lexend font-bold mb-3"
+                style={{
+                  fontSize: previewTitleSize,
+                  lineHeight: "1.25",
+                  color: highContrastPreview ? "#FFFFFF" : "#000000",
+                }}
+              >
+                Título de ejemplo
+              </h3>
+
+              <p
+                className="font-inter mb-4"
+                style={{
+                  fontSize: previewFontSize,
+                  lineHeight: "1.45",
+                  color: highContrastPreview ? "#FFFFFF" : "#1E1E1E",
+                }}
+              >
+                Así se verá el texto principal dentro del sistema según el
+                tamaño de letra y el contraste seleccionado.
+              </p>
+
+              <div
+                className="border px-3 py-2 mb-4 font-inter"
+                style={{
+                  ...previewInputStyle,
+                  fontSize: previewFontSize,
+                }}
+              >
+                Campo de texto
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <span
+                  className="font-inter font-medium"
+                  style={{
+                    ...previewLinkStyle,
+                    fontSize: previewFontSize,
+                  }}
+                >
+                  Enlace de ejemplo
+                </span>
+
+                <div
+                  className="px-4 py-2 border font-inter font-semibold rounded"
+                  style={{
+                    ...previewButtonStyle,
+                    fontSize: previewFontSize,
+                  }}
+                >
+                  Botón
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-2 mt-8">
+      <div className="flex flex-wrap items-center justify-end gap-2 mt-8">
         <button
           type="button"
-          onClick={handleReset}
+          onClick={handleCancel}
           disabled={saving}
           className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded disabled:opacity-50"
         >
           Cancelar
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void handleRestoreDefaults()}
+          disabled={saving}
+          className="h-10 px-4 font-inter font-medium text-base bg-white border border-gray-300 text-black transition-colors rounded disabled:opacity-50"
+        >
+          Restablecer preferencias
         </button>
 
         <button

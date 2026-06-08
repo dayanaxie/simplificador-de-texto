@@ -2,11 +2,6 @@
 @import "tailwindcss";
 
 @layer base {
-  /**
-   * Tailwind CSS theme
-   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
-   * A different format will require also updating the theme in tailwind.config.ts.
-  */
   :root {
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
@@ -44,19 +39,12 @@
     --page-bg: 0 0% 96%;
 
     --sidebar-background: 0 0% 98%;
-
     --sidebar-foreground: 240 5.3% 26.1%;
-
     --sidebar-primary: 240 5.9% 10%;
-
     --sidebar-primary-foreground: 0 0% 98%;
-
     --sidebar-accent: 240 4.8% 95.9%;
-
     --sidebar-accent-foreground: 240 5.9% 10%;
-
     --sidebar-border: 220 13% 91%;
-
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
@@ -88,6 +76,7 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -99,15 +88,22 @@
   }
 }
 
+/* =========================================================
+   ESTILOS BASE GENERALES
+========================================================= */
+
 @layer base {
   * {
     border-color: hsl(var(--border));
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-
   }
 
   nav {
@@ -124,5 +120,341 @@
   code {
     overflow-x: auto;
     white-space: pre;
+  }
+
+  button,
+  input,
+  textarea,
+  select,
+  a {
+    outline-offset: 3px;
+  }
+
+  :focus-visible {
+    outline: 3px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
+}
+
+/* =========================================================
+   PREFERENCIAS DE TAMAÑO DE LETRA
+   Se activan desde React con:
+   document.documentElement.dataset.fontSize = "pequeño" | "mediano" | "grande"
+========================================================= */
+
+@layer base {
+  html[data-font-size="pequeño"] {
+    font-size: 14px;
+  }
+
+  html[data-font-size="mediano"] {
+    font-size: 16px;
+  }
+
+  html[data-font-size="grande"] {
+    font-size: 18px;
+  }
+}
+
+/* =========================================================
+   MODO ALTO CONTRASTE ACCESIBLE
+   Se activa desde React con:
+   document.documentElement.dataset.highContrast = "true"
+========================================================= */
+
+@layer base {
+  html[data-high-contrast="true"] {
+    color-scheme: dark;
+
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+
+    --card: 0 0% 0%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 0 0% 0%;
+    --popover-foreground: 0 0% 100%;
+
+    /*
+      Amarillo accesible para acciones, foco y enlaces.
+      Sobre negro tiene contraste alto.
+    */
+    --primary: 55 100% 50%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 100%;
+
+    --accent: 55 100% 50%;
+    --accent-foreground: 0 0% 0%;
+
+    --destructive: 0 100% 65%;
+    --destructive-foreground: 0 0% 0%;
+
+    --border: 0 0% 100%;
+    --input: 0 0% 100%;
+    --ring: 55 100% 50%;
+
+    --navy: 0 0% 0%;
+    --navy-foreground: 0 0% 100%;
+    --page-bg: 0 0% 0%;
+
+    --sidebar-background: 0 0% 0%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 55 100% 50%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 12%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 100%;
+    --sidebar-ring: 55 100% 50%;
+  }
+
+  html[data-high-contrast="true"] body {
+    background-color: #000000;
+    color: #ffffff;
+  }
+
+  html[data-high-contrast="true"] main,
+  html[data-high-contrast="true"] section,
+  html[data-high-contrast="true"] article,
+  html[data-high-contrast="true"] aside,
+  html[data-high-contrast="true"] header,
+  html[data-high-contrast="true"] footer {
+    background-color: #000000;
+    color: #ffffff;
+  }
+
+  html[data-high-contrast="true"] nav {
+    background-color: #000000 !important;
+    border-color: #ffffff !important;
+  }
+
+  /*
+    Fondos claros frecuentes en Tailwind o clases personalizadas.
+  */
+  html[data-high-contrast="true"] .bg-white,
+  html[data-high-contrast="true"] .bg-gray-50,
+  html[data-high-contrast="true"] .bg-gray-100,
+  html[data-high-contrast="true"] .bg-surface,
+  html[data-high-contrast="true"] .bg-\[\#F5F5F5\],
+  html[data-high-contrast="true"] .bg-\[\#f5f5f5\],
+  html[data-high-contrast="true"] .bg-\[\#FFFFFF\],
+  html[data-high-contrast="true"] .bg-\[\#ffffff\] {
+    background-color: #000000 !important;
+  }
+
+  /*
+    Fondos secundarios para tarjetas, cajas e inputs.
+  */
+  html[data-high-contrast="true"] .bg-gray-200,
+  html[data-high-contrast="true"] .bg-gray-300,
+  html[data-high-contrast="true"] .bg-\[\#E0E0E0\],
+  html[data-high-contrast="true"] .bg-\[\#e0e0e0\] {
+    background-color: #111111 !important;
+  }
+
+  /*
+    Textos oscuros o grises deben pasar a blanco.
+  */
+  html[data-high-contrast="true"] .text-black,
+  html[data-high-contrast="true"] .text-gray-900,
+  html[data-high-contrast="true"] .text-gray-800,
+  html[data-high-contrast="true"] .text-gray-700,
+  html[data-high-contrast="true"] .text-gray-600,
+  html[data-high-contrast="true"] .text-gray-500,
+  html[data-high-contrast="true"] .text-\[\#1E1E1E\],
+  html[data-high-contrast="true"] .text-\[\#1e1e1e\],
+  html[data-high-contrast="true"] .text-\[\#666\],
+  html[data-high-contrast="true"] .text-\[\#999\],
+  html[data-high-contrast="true"] .text-\[\#002855\] {
+    color: #ffffff !important;
+  }
+
+  /*
+    Bordes visibles para separar componentes.
+  */
+  html[data-high-contrast="true"] .border,
+  html[data-high-contrast="true"] .border-card-border,
+  html[data-high-contrast="true"] .border-input-border,
+  html[data-high-contrast="true"] .border-gray-100,
+  html[data-high-contrast="true"] .border-gray-200,
+  html[data-high-contrast="true"] .border-gray-300,
+  html[data-high-contrast="true"] .border-\[\#D9D9D9\],
+  html[data-high-contrast="true"] .border-\[\#d9d9d9\],
+  html[data-high-contrast="true"] .border-\[\#E0E0E0\],
+  html[data-high-contrast="true"] .border-\[\#e0e0e0\] {
+    border-color: #ffffff !important;
+  }
+
+  /*
+    Inputs accesibles.
+  */
+  html[data-high-contrast="true"] input,
+  html[data-high-contrast="true"] textarea,
+  html[data-high-contrast="true"] select {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    border-color: #ffffff !important;
+  }
+
+  html[data-high-contrast="true"] input::placeholder,
+  html[data-high-contrast="true"] textarea::placeholder {
+    color: #ffffff !important;
+    opacity: 1;
+  }
+
+  html[data-high-contrast="true"] input:disabled,
+  html[data-high-contrast="true"] textarea:disabled,
+  html[data-high-contrast="true"] select:disabled,
+  html[data-high-contrast="true"] button:disabled {
+    opacity: 1 !important;
+    color: #d9d9d9 !important;
+    border-color: #d9d9d9 !important;
+    cursor: not-allowed;
+  }
+
+  /*
+    Botones generales.
+  */
+/*
+  Botones generales en alto contraste.
+  Fuerza que TODOS los botones tengan cuadro visible.
+*/
+html[data-high-contrast="true"] button {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 0.375rem;
+  box-shadow: none !important;
+}
+
+/*
+  Botones principales o activos.
+  Esto ayuda cuando un botón está seleccionado o presionado.
+*/
+html[data-high-contrast="true"] button[aria-pressed="true"],
+html[data-high-contrast="true"] button[aria-selected="true"] {
+  background-color: #ffea00 !important;
+  color: #000000 !important;
+  border: 2px solid #ffea00 !important;
+}
+
+/*
+  Hover visible.
+*/
+html[data-high-contrast="true"] button:not(:disabled):hover {
+  background-color: #ffea00 !important;
+  color: #000000 !important;
+  border-color: #ffea00 !important;
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/*
+  Botones deshabilitados.
+*/
+html[data-high-contrast="true"] button:disabled {
+  background-color: #111111 !important;
+  color: #d9d9d9 !important;
+  border: 2px solid #d9d9d9 !important;
+  cursor: not-allowed;
+  opacity: 1 !important;
+}
+
+  /*
+    Botones activos de preferencias.
+    Esto evita que la opción activa dependa solo del color azul.
+  */
+html[data-high-contrast="true"] button[aria-pressed="true"] {
+  background-color: #ffea00 !important;
+  color: #000000 !important;
+  border: 2px solid #ffea00 !important;
+}
+
+html[data-high-contrast="true"] button[aria-pressed="false"] {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 2px solid #ffffff !important;
+}
+
+  /*
+    Pestañas activas.
+  */
+  html[data-high-contrast="true"] button[aria-selected="true"] {
+    color: #ffffff !important;
+  }
+
+  /*
+    Enlaces accesibles: no dependen solo del color.
+  */
+  html[data-high-contrast="true"] a {
+    color: #ffea00 !important;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 2px;
+  }
+
+  html[data-high-contrast="true"] a:hover {
+    background-color: #ffea00;
+    color: #000000 !important;
+  }
+
+  /*
+    Foco visible para teclado.
+  */
+  html[data-high-contrast="true"] :focus-visible {
+    outline: 3px solid #ffea00 !important;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 2px #000000;
+  }
+
+  /*
+    Selección de texto visible.
+  */
+  html[data-high-contrast="true"] ::selection {
+    background-color: #ffea00;
+    color: #000000;
+  }
+
+  /*
+    Tablas en alto contraste.
+  */
+  html[data-high-contrast="true"] table,
+  html[data-high-contrast="true"] th,
+  html[data-high-contrast="true"] td {
+    border-color: #ffffff !important;
+    color: #ffffff !important;
+  }
+
+  html[data-high-contrast="true"] th {
+    background-color: #111111 !important;
+  }
+
+  /*
+    Código y bloques preformateados.
+  */
+  html[data-high-contrast="true"] pre,
+  html[data-high-contrast="true"] code {
+    background-color: #111111 !important;
+    color: #ffffff !important;
+    border-color: #ffffff !important;
+  }
+}
+
+/* =========================================================
+   SOPORTE PARA MODO ALTO CONTRASTE DEL SISTEMA OPERATIVO
+========================================================= */
+
+@media (forced-colors: active) {
+  * {
+    forced-color-adjust: auto;
+  }
+
+  :focus-visible {
+    outline: 3px solid CanvasText;
+    outline-offset: 3px;
   }
 }
