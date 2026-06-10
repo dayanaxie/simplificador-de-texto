@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import BotonAyuda from "../components/BotonAyuda";
 
 const WORD_LIMIT_DEFAULT = 500;
+const REPORT_TABLE = "reports";
 
 function countWords(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
@@ -24,11 +25,11 @@ interface Categoria {
 
 const formatearFecha = (iso: string) => {
   if (!iso) return "";
+
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 };
 
-// ── Generación de id desde el código (algunas tablas no autogeneran el id) ──
 async function siguienteId(tabla: string): Promise<number> {
   const { data, error } = await supabase
     .from(tabla)
@@ -69,6 +70,7 @@ export default function Index() {
   const [inputText, setInputText] = useState("");
   const [simplifiedText, setSimplifiedText] = useState("");
   const [isSimplifying, setIsSimplifying] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [wordLimit, setWordLimit] = useState(WORD_LIMIT_DEFAULT);
 
   const [errorMessage, setErrorMessage] = useState("");
@@ -76,6 +78,7 @@ export default function Index() {
 
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportDescription, setReportDescription] = useState("");
+  const [isSendingReport, setIsSendingReport] = useState(false);
 
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -91,8 +94,6 @@ export default function Index() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [rating, setRating] = useState(0);
-
-  const [isExporting, setIsExporting] = useState(false);
 
   const inputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -144,9 +145,7 @@ export default function Index() {
 
   const obtenerOCrearSimplificationId = useCallback(
     async (userId: number): Promise<number> => {
-      if (lastSimplificationId) {
-        return lastSimplificationId;
-      }
+      if (lastSimplificationId) return lastSimplificationId;
 
       const { data, error } = await supabase
         .from("simplifications")
@@ -161,9 +160,7 @@ export default function Index() {
         .select("id")
         .single();
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       setLastSimplificationId(data.id);
       return data.id;
@@ -200,8 +197,7 @@ export default function Index() {
 
       setInputText(text);
       setSuccessMessage("Texto pegado correctamente.");
-    } catch (error) {
-      console.error("Error al pegar:", error);
+    } catch {
       setErrorMessage(
         "El navegador bloqueó el botón Pegar. Ya enfoqué el cuadro: presiona Ctrl + V."
       );
@@ -239,17 +235,13 @@ export default function Index() {
           .select("id")
           .single();
 
-        if (error) {
-          console.error("Error guardando simplificación para métricas:", error);
-        } else {
+        if (!error) {
           setLastSimplificationId(data.id);
         }
       }
 
       setSuccessMessage("Texto simplificado correctamente.");
     } catch (error) {
-      console.error("Error simplificando:", error);
-
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -285,8 +277,7 @@ export default function Index() {
       }
 
       setSuccessMessage("Texto copiado correctamente.");
-    } catch (error) {
-      console.error("Error al copiar:", error);
+    } catch {
       setErrorMessage(
         "El navegador no permitió copiar. Selecciona el resultado y usa Ctrl + C."
       );
@@ -369,9 +360,7 @@ export default function Index() {
         .select("id")
         .single();
 
-      if (savedError) {
-        throw savedError;
-      }
+      if (savedError) throw savedError;
 
       let categoryId: number;
 
@@ -384,9 +373,7 @@ export default function Index() {
           .eq("name", nombreCategoria)
           .limit(1);
 
-        if (searchError) {
-          throw searchError;
-        }
+        if (searchError) throw searchError;
 
         if (existingCategories && existingCategories.length > 0) {
           categoryId = existingCategories[0].id;
@@ -401,9 +388,7 @@ export default function Index() {
             .select("id, name")
             .single();
 
-          if (categoryError) {
-            throw categoryError;
-          }
+          if (categoryError) throw categoryError;
 
           categoryId = newCategory.id;
 
@@ -436,8 +421,7 @@ export default function Index() {
       setRating(0);
       setSaveError("");
       setSuccessMessage("Simplificación guardada correctamente.");
-    } catch (error) {
-      console.error("Error guardando simplificación:", error);
+    } catch {
       setSaveError("No se pudo guardar la simplificación.");
     } finally {
       setIsSaving(false);
@@ -460,27 +444,62 @@ export default function Index() {
   }, [simplifiedText]);
 
   const handleCancelReport = useCallback(() => {
-    setIsReportModalOpen(false);
-    setReportDescription("");
-  }, []);
-
-  const handleSendReport = useCallback(() => {
-    if (!reportDescription.trim()) return;
-
-    const reportData = {
-      originalText: inputText,
-      simplifiedText,
-      description: reportDescription,
-      createdAt: new Date().toISOString(),
-    };
-
-    console.log("Reporte enviado:", reportData);
+    if (isSendingReport) return;
 
     setIsReportModalOpen(false);
     setReportDescription("");
-    setSuccessMessage("Reporte enviado correctamente.");
-    setErrorMessage("");
-  }, [inputText, simplifiedText, reportDescription]);
+  }, [isSendingReport]);
+
+  const handleSendReport = useCallback(async () => {
+    if (!reportDescription.trim() || isSendingReport) return;
+
+    const confirmado = window.confirm(
+      "¿Estás segura de que deseas enviar este reporte?"
+    );
+
+    if (!confirmado) {
+      return;
+    }
+
+    const usuarioGuardado = localStorage.getItem("usuario");
+    const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
+
+    if (!usuario?.id) {
+      alert("No se encontró el usuario activo.");
+      setErrorMessage("No se encontró el usuario activo.");
+      setSuccessMessage("");
+      return;
+    }
+
+    try {
+      setIsSendingReport(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const simplificationId = await obtenerOCrearSimplificationId(usuario.id);
+
+      await insertarFila(REPORT_TABLE, {
+        user_id: usuario.id,
+        simplification_id: simplificationId,
+        description: reportDescription.trim(),
+        status: "pending",
+        created_at: new Date().toISOString(),
+      });
+
+      setIsReportModalOpen(false);
+      setReportDescription("");
+
+      alert("Reporte enviado correctamente.");
+      setSuccessMessage("Reporte enviado correctamente.");
+      setErrorMessage("");
+    } catch {
+      alert("No se pudo enviar el reporte.");
+      setErrorMessage("No se pudo enviar el reporte.");
+      setSuccessMessage("");
+    } finally {
+      setIsSendingReport(false);
+    }
+  }, [reportDescription, isSendingReport, obtenerOCrearSimplificationId]);
 
   const handleExport = useCallback(async () => {
     if (!simplifiedText.trim() || isExporting) return;
@@ -513,7 +532,10 @@ export default function Index() {
         created_at: ahora,
       });
 
-      const blob = new Blob([simplifiedText], { type: "text/plain" });
+      const blob = new Blob([simplifiedText], {
+        type: "text/plain;charset=utf-8",
+      });
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
 
@@ -524,8 +546,7 @@ export default function Index() {
       URL.revokeObjectURL(url);
 
       setSuccessMessage("Texto exportado y registrado correctamente.");
-    } catch (error) {
-      console.error("Error exportando texto:", error);
+    } catch {
       setErrorMessage("No se pudo registrar la exportación del texto.");
       setSuccessMessage("");
     } finally {
@@ -540,6 +561,8 @@ export default function Index() {
     setSuccessMessage("");
     setReportDescription("");
     setIsReportModalOpen(false);
+    setIsSendingReport(false);
+    setIsExporting(false);
 
     setLastSimplificationId(null);
     setIsSaveModalOpen(false);
@@ -548,25 +571,27 @@ export default function Index() {
     setNewCategoryName("");
     setRating(0);
     setSaveError("");
-    setIsExporting(false);
   }, []);
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex flex-col">
       <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-8 lg:px-[52px] py-6 sm:py-8 lg:py-[30px]">
         <div className="bg-white border border-[#E0E0E0] w-full p-5 sm:p-8 lg:p-10 flex flex-col gap-6 sm:gap-8">
-          {/* Simplificador */}
           <section className="flex flex-col gap-5 sm:gap-6">
             <h1 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
               Simplificador de Texto
             </h1>
 
             <div className="flex flex-col gap-2">
-              <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
+              <label
+                htmlFor="texto-original"
+                className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]"
+              >
                 Ingrese un texto menor a {wordLimit} palabras
               </label>
 
               <textarea
+                id="texto-original"
                 ref={inputTextareaRef}
                 className="w-full min-h-[90px] sm:min-h-[100px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
                 placeholder="Ingrese el texto original"
@@ -608,37 +633,40 @@ export default function Index() {
               </div>
 
               {isOverLimit && (
-                <p className="text-sm text-red-600 font-inter">
+                <p className="text-sm text-red-600 font-inter" role="alert">
                   El texto supera el límite permitido de {wordLimit} palabras.
                 </p>
               )}
 
               {errorMessage && (
-                <p className="text-sm text-red-600 font-inter">
+                <p className="text-sm text-red-600 font-inter" role="alert">
                   {errorMessage}
                 </p>
               )}
 
               {successMessage && (
-                <p className="text-sm text-green-600 font-inter">
+                <p className="text-sm text-green-600 font-inter" role="status">
                   {successMessage}
                 </p>
               )}
             </div>
           </section>
 
-          {/* Resultado */}
           <section className="flex flex-col gap-5 sm:gap-6">
             <h2 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
               Resultado de la Simplificación
             </h2>
 
             <div className="flex flex-col gap-2">
-              <label className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]">
+              <label
+                htmlFor="texto-simplificado"
+                className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%]"
+              >
                 Texto simplificado
               </label>
 
               <textarea
+                id="texto-simplificado"
                 ref={outputTextareaRef}
                 readOnly
                 className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
@@ -694,7 +722,6 @@ export default function Index() {
             </div>
           </section>
 
-          {/* Anuncios */}
           <section className="flex flex-col gap-4 sm:gap-5">
             <h2 className="font-lexend font-semibold text-2xl sm:text-3xl lg:text-[32px] leading-[150%] text-black">
               Anuncios
@@ -718,9 +745,7 @@ export default function Index() {
                       <span className="font-bold">Contenido</span>
                       <span className="font-light">: {ann.content}</span>
                       <br />
-                      <span className="font-bold">
-                        Vigencia del anuncio
-                      </span>
+                      <span className="font-bold">Vigencia del anuncio</span>
                       <span className="font-light">
                         : {formatearFecha(ann.start_date)} al{" "}
                         {formatearFecha(ann.end_date)}
@@ -734,17 +759,22 @@ export default function Index() {
         </div>
       </main>
 
-      {/* Modal de guardar simplificación */}
       {isSaveModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-guardar"
           onClick={handleCancelSave}
         >
           <div
             className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-5">
+            <h2
+              id="titulo-guardar"
+              className="font-inter font-semibold text-xl text-black mb-5"
+            >
               Guardar simplificación
             </h2>
 
@@ -843,7 +873,9 @@ export default function Index() {
               </div>
 
               {saveError && (
-                <p className="text-sm text-red-600 font-inter">{saveError}</p>
+                <p className="text-sm text-red-600 font-inter" role="alert">
+                  {saveError}
+                </p>
               )}
             </div>
 
@@ -875,17 +907,22 @@ export default function Index() {
         </div>
       )}
 
-      {/* Modal de reporte */}
       {isReportModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-reporte"
           onClick={handleCancelReport}
         >
           <div
             className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-5">
+            <h2
+              id="titulo-reporte"
+              className="font-inter font-semibold text-xl text-black mb-5"
+            >
               Ingrese el motivo del reporte
             </h2>
 
@@ -897,8 +934,9 @@ export default function Index() {
               <textarea
                 value={reportDescription}
                 onChange={(e) => setReportDescription(e.target.value)}
+                disabled={isSendingReport}
                 placeholder="Escriba su descripción aquí..."
-                className="w-full min-h-[95px] border border-[#D9D9D9] rounded px-4 py-3 font-inter text-base text-[#1E1E1E] resize-none outline-none focus:border-[#002855] transition-colors"
+                className="w-full min-h-[95px] border border-[#D9D9D9] rounded px-4 py-3 font-inter text-base text-[#1E1E1E] resize-none outline-none focus:border-[#002855] transition-colors disabled:opacity-50"
               />
             </div>
 
@@ -906,7 +944,8 @@ export default function Index() {
               <button
                 type="button"
                 onClick={handleCancelReport}
-                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors rounded"
+                disabled={isSendingReport}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
               >
                 Cancelar
               </button>
@@ -914,10 +953,10 @@ export default function Index() {
               <button
                 type="button"
                 onClick={handleSendReport}
-                disabled={!reportDescription.trim()}
+                disabled={!reportDescription.trim() || isSendingReport}
                 className="px-6 py-2 font-inter font-medium text-sm text-white bg-[#002855] hover:bg-[#003d80] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
               >
-                Enviar
+                {isSendingReport ? "Enviando..." : "Enviar"}
               </button>
             </div>
           </div>

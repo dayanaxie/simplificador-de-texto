@@ -65,6 +65,30 @@ const formatearFecha = (fecha?: string | null) => {
   }).format(fechaConvertida);
 };
 
+const limpiarNombreArchivo = (nombre: string) => {
+  const limpio = nombre
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return limpio || "texto-simplificado";
+};
+
+const descargarTexto = (contenido: string, filePath: string) => {
+  const blob = new Blob([contenido], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = filePath;
+  a.click();
+
+  URL.revokeObjectURL(url);
+};
+
 const getUsuarioActual = () => {
   const usuarioGuardado = localStorage.getItem("usuario");
   return usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
@@ -117,6 +141,7 @@ export default function TextosGuardados() {
     null
   );
   const [eliminando, setEliminando] = useState(false);
+  const [exportandoId, setExportandoId] = useState<number | null>(null);
 
   const cargarTextos = useCallback(async () => {
     const usuario = getUsuarioActual();
@@ -265,6 +290,102 @@ export default function TextosGuardados() {
     );
   };
 
+  const exportarTextoGuardado = useCallback(
+    async (texto: TextoGuardado) => {
+      if (!texto.simplified_text.trim()) {
+        setError("Este texto no tiene contenido simplificado para exportar.");
+        setMensaje("");
+        throw new Error("Texto sin contenido simplificado.");
+      }
+
+      const usuario = getUsuarioActual();
+      const userId = texto.user_id || usuario?.id;
+
+      if (!userId) {
+        setError("No se encontró el usuario activo.");
+        setMensaje("");
+        throw new Error("No se encontró el usuario activo.");
+      }
+
+      try {
+        setExportandoId(texto.id);
+        setError("");
+        setMensaje("");
+
+        let simplificationId = texto.simplification_id;
+
+        if (!simplificationId) {
+          const { data: simplificationData, error: simplificationError } =
+            await supabase
+              .from("simplifications")
+              .insert([
+                {
+                  user_id: userId,
+                  original_text: texto.original_text,
+                  simplified_text: texto.simplified_text,
+                  status: "completed",
+                },
+              ])
+              .select("id")
+              .single();
+
+          if (simplificationError) throw simplificationError;
+
+          simplificationId = simplificationData.id;
+
+          const { error: updateSavedError } = await supabase
+            .from("saved_simplifications")
+            .update({
+              simplification_id: simplificationId,
+            })
+            .eq("id", texto.id);
+
+          if (updateSavedError) throw updateSavedError;
+
+          const textoActualizado = {
+            ...texto,
+            simplification_id: simplificationId,
+          };
+
+          setTextos((prev) =>
+            prev.map((item) =>
+              item.id === texto.id ? textoActualizado : item
+            )
+          );
+
+          if (selectedTexto?.id === texto.id) {
+            setSelectedTexto(textoActualizado);
+          }
+        }
+
+        const ahora = new Date().toISOString();
+
+        const filePath = `${limpiarNombreArchivo(texto.title)}-${ahora
+          .slice(0, 19)
+          .replace(/[:T]/g, "-")}.txt`;
+
+        await insertarFila("exports", {
+          simplification_id: simplificationId,
+          file_path: filePath,
+          created_at: ahora,
+        });
+
+        descargarTexto(texto.simplified_text, filePath);
+
+        setMensaje("Texto exportado y registrado correctamente.");
+        setError("");
+      } catch (err) {
+        console.error("Error exportando texto guardado:", err);
+        setError("No se pudo registrar la exportación del texto.");
+        setMensaje("");
+        throw err;
+      } finally {
+        setExportandoId(null);
+      }
+    },
+    [selectedTexto]
+  );
+
   const confirmarEliminar = async () => {
     if (!textoAEliminar) return;
 
@@ -381,11 +502,13 @@ export default function TextosGuardados() {
               <TextosGuardadosTab
                 textos={textos}
                 loading={loading}
+                exportandoId={exportandoId}
                 onEditar={(texto) => seleccionarTexto(texto, "edicion")}
                 onHistorial={(texto) => seleccionarTexto(texto, "historial")}
                 onValoraciones={(texto) =>
                   seleccionarTexto(texto, "valoraciones")
                 }
+                onExportar={exportarTextoGuardado}
                 onEliminar={(texto) => setTextoAEliminar(texto)}
               />
             )}
@@ -395,6 +518,7 @@ export default function TextosGuardados() {
                 texto={selectedTexto}
                 onRegresar={regresar}
                 onTextoActualizado={actualizarTextoLocal}
+                onExportarTexto={exportarTextoGuardado}
               />
             )}
 
@@ -470,16 +594,20 @@ export default function TextosGuardados() {
 function TextosGuardadosTab({
   textos,
   loading,
+  exportandoId,
   onEditar,
   onHistorial,
   onValoraciones,
+  onExportar,
   onEliminar,
 }: {
   textos: TextoGuardado[];
   loading: boolean;
+  exportandoId: number | null;
   onEditar: (texto: TextoGuardado) => void;
   onHistorial: (texto: TextoGuardado) => void;
   onValoraciones: (texto: TextoGuardado) => void;
+  onExportar: (texto: TextoGuardado) => Promise<void>;
   onEliminar: (texto: TextoGuardado) => void;
 }) {
   const [busqueda, setBusqueda] = useState("");
@@ -530,7 +658,7 @@ function TextosGuardadosTab({
       <table className="w-full text-left border-collapse font-inter text-base text-[#1E1E1E]">
         <caption className="sr-only">
           Lista de textos guardados con opciones de edición, historial,
-          valoraciones y eliminación.
+          valoraciones, exportación y eliminación.
         </caption>
 
         <thead>
@@ -554,6 +682,9 @@ function TextosGuardadosTab({
               Valoraciones
             </th>
             <th scope="col" className="py-3 font-medium text-center">
+              Exportar
+            </th>
+            <th scope="col" className="py-3 font-medium text-center">
               Eliminar
             </th>
           </tr>
@@ -562,13 +693,13 @@ function TextosGuardadosTab({
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-[#666]">
+              <td colSpan={8} className="py-8 text-center text-[#666]">
                 Cargando textos guardados...
               </td>
             </tr>
           ) : textosFiltrados.length === 0 ? (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-[#666]">
+              <td colSpan={8} className="py-8 text-center text-[#666]">
                 No hay textos guardados.
               </td>
             </tr>
@@ -618,6 +749,21 @@ function TextosGuardadosTab({
                 <td className="py-3 text-center">
                   <button
                     type="button"
+                    onClick={() => onExportar(texto)}
+                    disabled={
+                      !texto.simplified_text.trim() || exportandoId === texto.id
+                    }
+                    className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855] disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ backgroundColor: "hsl(var(--navy))" }}
+                    aria-label={`Exportar el texto ${texto.title}`}
+                  >
+                    {exportandoId === texto.id ? "Exportando..." : "Exportar"}
+                  </button>
+                </td>
+
+                <td className="py-3 text-center">
+                  <button
+                    type="button"
                     onClick={() => onEliminar(texto)}
                     className="px-3 h-9 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
                     aria-label={`Eliminar el texto ${texto.title}`}
@@ -640,10 +786,12 @@ function EdicionTab({
   texto,
   onRegresar,
   onTextoActualizado,
+  onExportarTexto,
 }: {
   texto: TextoGuardado;
   onRegresar: () => void;
   onTextoActualizado: (texto: TextoGuardado) => void;
+  onExportarTexto: (texto: TextoGuardado) => Promise<void>;
 }) {
   const [originalText, setOriginalText] = useState(texto.original_text);
   const [simplifiedText, setSimplifiedText] = useState(texto.simplified_text);
@@ -655,6 +803,7 @@ function EdicionTab({
   const [estrellas, setEstrellas] = useState(0);
   const [hoverEstrellas, setHoverEstrellas] = useState(0);
   const [errorGuardar, setErrorGuardar] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
 
   const originalRef = useRef<HTMLTextAreaElement | null>(null);
   const wordCount = countWords(originalText);
@@ -710,18 +859,27 @@ function EdicionTab({
     }
   };
 
-  const handleExportar = () => {
-    if (!simplifiedText) return;
+  const handleExportar = async () => {
+    if (!simplifiedText.trim() || isExporting) return;
 
-    const blob = new Blob([simplifiedText], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    try {
+      setIsExporting(true);
+      setErrorMsg("");
+      setSuccessMsg("");
 
-    a.href = url;
-    a.download = "texto-simplificado.txt";
-    a.click();
+      await onExportarTexto({
+        ...texto,
+        original_text: originalText,
+        simplified_text: simplifiedText,
+      });
 
-    URL.revokeObjectURL(url);
+      setSuccessMsg("Texto exportado y registrado correctamente.");
+    } catch (error) {
+      console.error("Error exportando desde edición:", error);
+      setErrorMsg("No se pudo exportar el texto.");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const abrirModalGuardar = () => {
@@ -913,11 +1071,11 @@ function EdicionTab({
           <button
             type="button"
             onClick={handleExportar}
-            disabled={!simplifiedText.trim()}
+            disabled={!simplifiedText.trim() || isExporting}
             className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors rounded disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: "hsl(var(--navy))" }}
           >
-            Exportar texto
+            {isExporting ? "Exportando..." : "Exportar texto"}
           </button>
 
           <button
