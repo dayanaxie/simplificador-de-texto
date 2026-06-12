@@ -96,7 +96,7 @@ Para que la simplificación funcione correctamente, Ollama debe estar ejecutánd
 ## Usuario Administrador Prederteminado
 | Correo | Contraseña |
 |--------|--------|
-|Pedro@gmail.com | Pedro123 |
+|pedro@gmail.com | pedro123 |
 
 
 
