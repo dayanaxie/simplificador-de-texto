@@ -25,20 +25,68 @@ interface TextoGuardado {
 }
 
 const WORD_LIMIT = 500;
+const ZONA_HORARIA_CR = "America/Costa_Rica";
 
 function countWords(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
 }
 
+const normalizarFechaSupabase = (fecha: string) => {
+  const fechaLimpia = fecha.trim();
+
+  const tieneZonaHoraria = /([zZ]|[+-]\d{2}:?\d{2})$/.test(fechaLimpia);
+
+  if (tieneZonaHoraria) return fechaLimpia;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fechaLimpia)) return fechaLimpia;
+
+  const fechaConFormatoISO = fechaLimpia.includes("T")
+    ? fechaLimpia
+    : fechaLimpia.replace(" ", "T");
+
+  return `${fechaConFormatoISO}Z`;
+};
+
 const formatearFecha = (fecha?: string | null) => {
   if (!fecha) return "-";
 
-  return new Date(fecha).toLocaleDateString("es-CR", {
-    timeZone: "America/Costa_Rica",
+  const fechaConvertida = new Date(normalizarFechaSupabase(fecha));
+
+  if (Number.isNaN(fechaConvertida.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("es-CR", {
+    timeZone: ZONA_HORARIA_CR,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  });
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(fechaConvertida);
+};
+
+const limpiarNombreArchivo = (nombre: string) => {
+  const limpio = nombre
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return limpio || "texto-simplificado";
+};
+
+const descargarTexto = (contenido: string, filePath: string) => {
+  const blob = new Blob([contenido], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = filePath;
+  a.click();
+
+  URL.revokeObjectURL(url);
 };
 
 const getUsuarioActual = () => {
@@ -46,14 +94,15 @@ const getUsuarioActual = () => {
   return usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
 };
 
-// ── Generación de id desde el código (algunas tablas no autogeneran el id) ──
 async function siguienteId(tabla: string): Promise<number> {
   const { data, error } = await supabase
     .from(tabla)
     .select("id")
     .order("id", { ascending: false })
     .limit(1);
+
   if (error) throw error;
+
   const maxId = data && data.length > 0 ? Number(data[0].id) : 0;
   return maxId + 1;
 }
@@ -64,15 +113,20 @@ async function insertarFila(
   intentos = 5
 ): Promise<void> {
   const primer = await supabase.from(tabla).insert(fila);
+
   if (!primer.error) return;
+
   if (primer.error.code !== "23502") throw primer.error;
 
   for (let i = 0; i < intentos; i++) {
     const id = await siguienteId(tabla);
     const { error } = await supabase.from(tabla).insert({ ...fila, id });
+
     if (!error) return;
+
     if (error.code !== "23505") throw error;
   }
+
   throw new Error(`No se pudo generar un id único para ${tabla}.`);
 }
 
@@ -87,6 +141,7 @@ export default function TextosGuardados() {
     null
   );
   const [eliminando, setEliminando] = useState(false);
+  const [exportandoId, setExportandoId] = useState<number | null>(null);
 
   const cargarTextos = useCallback(async () => {
     const usuario = getUsuarioActual();
@@ -219,7 +274,6 @@ export default function TextosGuardados() {
     setError("");
   };
 
-  // Volver al listado (desde el botón Regresar de las sub-pestañas).
   const regresar = () => {
     setSelectedTexto(null);
     setActiveTab("guardados");
@@ -227,7 +281,6 @@ export default function TextosGuardados() {
     setError("");
   };
 
-  // Mantener sincronizados selectedTexto y la lista cuando se edita/restaura.
   const actualizarTextoLocal = (textoActualizado: TextoGuardado) => {
     setSelectedTexto(textoActualizado);
     setTextos((prev) =>
@@ -237,8 +290,105 @@ export default function TextosGuardados() {
     );
   };
 
+  const exportarTextoGuardado = useCallback(
+    async (texto: TextoGuardado) => {
+      if (!texto.simplified_text.trim()) {
+        setError("Este texto no tiene contenido simplificado para exportar.");
+        setMensaje("");
+        throw new Error("Texto sin contenido simplificado.");
+      }
+
+      const usuario = getUsuarioActual();
+      const userId = texto.user_id || usuario?.id;
+
+      if (!userId) {
+        setError("No se encontró el usuario activo.");
+        setMensaje("");
+        throw new Error("No se encontró el usuario activo.");
+      }
+
+      try {
+        setExportandoId(texto.id);
+        setError("");
+        setMensaje("");
+
+        let simplificationId = texto.simplification_id;
+
+        if (!simplificationId) {
+          const { data: simplificationData, error: simplificationError } =
+            await supabase
+              .from("simplifications")
+              .insert([
+                {
+                  user_id: userId,
+                  original_text: texto.original_text,
+                  simplified_text: texto.simplified_text,
+                  status: "completed",
+                },
+              ])
+              .select("id")
+              .single();
+
+          if (simplificationError) throw simplificationError;
+
+          simplificationId = simplificationData.id;
+
+          const { error: updateSavedError } = await supabase
+            .from("saved_simplifications")
+            .update({
+              simplification_id: simplificationId,
+            })
+            .eq("id", texto.id);
+
+          if (updateSavedError) throw updateSavedError;
+
+          const textoActualizado = {
+            ...texto,
+            simplification_id: simplificationId,
+          };
+
+          setTextos((prev) =>
+            prev.map((item) =>
+              item.id === texto.id ? textoActualizado : item
+            )
+          );
+
+          if (selectedTexto?.id === texto.id) {
+            setSelectedTexto(textoActualizado);
+          }
+        }
+
+        const ahora = new Date().toISOString();
+
+        const filePath = `${limpiarNombreArchivo(texto.title)}-${ahora
+          .slice(0, 19)
+          .replace(/[:T]/g, "-")}.txt`;
+
+        await insertarFila("exports", {
+          simplification_id: simplificationId,
+          file_path: filePath,
+          created_at: ahora,
+        });
+
+        descargarTexto(texto.simplified_text, filePath);
+
+        setMensaje("Texto exportado y registrado correctamente.");
+        setError("");
+      } catch (err) {
+        console.error("Error exportando texto guardado:", err);
+        setError("No se pudo registrar la exportación del texto.");
+        setMensaje("");
+        throw err;
+      } finally {
+        setExportandoId(null);
+      }
+    },
+    [selectedTexto]
+  );
+
   const confirmarEliminar = async () => {
     if (!textoAEliminar) return;
+
     const texto = textoAEliminar;
 
     try {
@@ -299,8 +449,7 @@ export default function TextosGuardados() {
           >
             {textosTabs.map((tab) => {
               const isActive = activeTab === tab.id;
-              // Sin texto elegido: se bloquean las sub-pestañas.
-              // Con un texto elegido: se bloquea "Textos guardados" (se vuelve con Regresar).
+
               const isLocked = selectedTexto
                 ? tab.id === "guardados"
                 : tab.id !== "guardados";
@@ -308,6 +457,7 @@ export default function TextosGuardados() {
               return (
                 <button
                   key={tab.id}
+                  type="button"
                   onClick={() => {
                     if (!isLocked) setActiveTab(tab.id);
                   }}
@@ -337,22 +487,28 @@ export default function TextosGuardados() {
 
           <div className="p-6 md:p-10 min-h-[400px]">
             {error && (
-              <p className="mb-4 text-sm text-red-600 font-inter">{error}</p>
+              <p className="mb-4 text-sm text-red-600 font-inter" role="alert">
+                {error}
+              </p>
             )}
 
             {mensaje && (
-              <p className="mb-4 text-sm text-green-700 font-inter">{mensaje}</p>
+              <p className="mb-4 text-sm text-green-700 font-inter" role="status">
+                {mensaje}
+              </p>
             )}
 
             {activeTab === "guardados" && (
               <TextosGuardadosTab
                 textos={textos}
                 loading={loading}
+                exportandoId={exportandoId}
                 onEditar={(texto) => seleccionarTexto(texto, "edicion")}
                 onHistorial={(texto) => seleccionarTexto(texto, "historial")}
                 onValoraciones={(texto) =>
                   seleccionarTexto(texto, "valoraciones")
                 }
+                onExportar={exportarTextoGuardado}
                 onEliminar={(texto) => setTextoAEliminar(texto)}
               />
             )}
@@ -362,6 +518,7 @@ export default function TextosGuardados() {
                 texto={selectedTexto}
                 onRegresar={regresar}
                 onTextoActualizado={actualizarTextoLocal}
+                onExportarTexto={exportarTextoGuardado}
               />
             )}
 
@@ -380,10 +537,12 @@ export default function TextosGuardados() {
         </div>
       </div>
 
-      {/* Modal de confirmación para eliminar un texto guardado */}
       {textoAEliminar && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-eliminar-texto"
           onClick={() => {
             if (!eliminando) setTextoAEliminar(null);
           }}
@@ -392,9 +551,13 @@ export default function TextosGuardados() {
             className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-1">
+            <h2
+              id="titulo-eliminar-texto"
+              className="font-inter font-semibold text-xl text-black mb-1"
+            >
               Eliminar texto guardado
             </h2>
+
             <p className="font-inter font-normal text-base text-[#1E1E1E] mb-5">
               ¿Seguro que quieres eliminar{" "}
               <span className="font-semibold">{textoAEliminar.title}</span>? Se
@@ -411,6 +574,7 @@ export default function TextosGuardados() {
               >
                 Cancelar
               </button>
+
               <button
                 type="button"
                 onClick={confirmarEliminar}
@@ -427,24 +591,23 @@ export default function TextosGuardados() {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Pantalla de Textos guardados (versión de la compañera): lista con categoría,
-// búsqueda en vivo y botones por fila (Editar / Historial / Valoraciones /
-// Eliminar). El borrado lo maneja el componente padre.
-// ──────────────────────────────────────────────────────────────────────────
 function TextosGuardadosTab({
   textos,
   loading,
+  exportandoId,
   onEditar,
   onHistorial,
   onValoraciones,
+  onExportar,
   onEliminar,
 }: {
   textos: TextoGuardado[];
   loading: boolean;
+  exportandoId: number | null;
   onEditar: (texto: TextoGuardado) => void;
   onHistorial: (texto: TextoGuardado) => void;
   onValoraciones: (texto: TextoGuardado) => void;
+  onExportar: (texto: TextoGuardado) => Promise<void>;
   onEliminar: (texto: TextoGuardado) => void;
 }) {
   const [busqueda, setBusqueda] = useState("");
@@ -469,7 +632,12 @@ function TextosGuardadosTab({
 
       <div className="flex items-center gap-4 mb-10 max-w-[700px]">
         <div className="border border-input-border bg-white px-4 py-3 flex-1">
+          <label htmlFor="buscar-texto-guardado" className="sr-only">
+            Buscar texto guardado por nombre o categoría
+          </label>
+
           <input
+            id="buscar-texto-guardado"
             type="text"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
@@ -479,6 +647,7 @@ function TextosGuardadosTab({
         </div>
 
         <button
+          type="button"
           className="text-white font-inter font-medium text-base px-8 h-12 flex items-center justify-center transition-colors rounded"
           style={{ backgroundColor: "hsl(var(--navy))" }}
         >
@@ -487,28 +656,50 @@ function TextosGuardadosTab({
       </div>
 
       <table className="w-full text-left border-collapse font-inter text-base text-[#1E1E1E]">
+        <caption className="sr-only">
+          Lista de textos guardados con opciones de edición, historial,
+          valoraciones, exportación y eliminación.
+        </caption>
+
         <thead>
           <tr className="border-b border-gray-300">
-            <th className="py-3 font-medium">Título</th>
-            <th className="py-3 font-medium">Categoría</th>
-            <th className="py-3 font-medium">Fecha</th>
-            <th className="py-3 font-medium text-center">Editar</th>
-            <th className="py-3 font-medium text-center">Historial</th>
-            <th className="py-3 font-medium text-center">Valoraciones</th>
-            <th className="py-3 font-medium text-center">Eliminar</th>
+            <th scope="col" className="py-3 font-medium">
+              Título
+            </th>
+            <th scope="col" className="py-3 font-medium">
+              Categoría
+            </th>
+            <th scope="col" className="py-3 font-medium">
+              Fecha
+            </th>
+            <th scope="col" className="py-3 font-medium text-center">
+              Editar
+            </th>
+            <th scope="col" className="py-3 font-medium text-center">
+              Historial
+            </th>
+            <th scope="col" className="py-3 font-medium text-center">
+              Valoraciones
+            </th>
+            <th scope="col" className="py-3 font-medium text-center">
+              Exportar
+            </th>
+            <th scope="col" className="py-3 font-medium text-center">
+              Eliminar
+            </th>
           </tr>
         </thead>
 
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-[#666]">
+              <td colSpan={8} className="py-8 text-center text-[#666]">
                 Cargando textos guardados...
               </td>
             </tr>
           ) : textosFiltrados.length === 0 ? (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-[#666]">
+              <td colSpan={8} className="py-8 text-center text-[#666]">
                 No hay textos guardados.
               </td>
             </tr>
@@ -521,41 +712,63 @@ function TextosGuardadosTab({
 
                 <td className="py-3 text-center">
                   <button
+                    type="button"
                     onClick={() => onEditar(texto)}
-                    className="text-xl text-black"
-                    title="Editar"
+                    className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                    style={{ backgroundColor: "hsl(var(--navy))" }}
+                    aria-label={`Editar el texto ${texto.title}`}
                   >
-                    ✎
+                    Editar
                   </button>
                 </td>
 
                 <td className="py-3 text-center">
                   <button
+                    type="button"
                     onClick={() => onHistorial(texto)}
-                    className="text-sm text-[#002855] underline"
-                    title="Historial"
+                    className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                    style={{ backgroundColor: "hsl(var(--navy))" }}
+                    aria-label={`Ver historial del texto ${texto.title}`}
                   >
-                    Ver
+                    Historial
                   </button>
                 </td>
 
                 <td className="py-3 text-center">
                   <button
+                    type="button"
                     onClick={() => onValoraciones(texto)}
-                    className="text-sm text-[#002855] underline"
-                    title="Valoraciones"
+                    className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                    style={{ backgroundColor: "hsl(var(--navy))" }}
+                    aria-label={`Ver valoraciones del texto ${texto.title}`}
                   >
-                    Ver
+                    Valoraciones
                   </button>
                 </td>
 
                 <td className="py-3 text-center">
                   <button
-                    onClick={() => onEliminar(texto)}
-                    className="text-xl text-black"
-                    title="Eliminar"
+                    type="button"
+                    onClick={() => onExportar(texto)}
+                    disabled={
+                      !texto.simplified_text.trim() || exportandoId === texto.id
+                    }
+                    className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855] disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ backgroundColor: "hsl(var(--navy))" }}
+                    aria-label={`Exportar el texto ${texto.title}`}
                   >
-                    🗑
+                    {exportandoId === texto.id ? "Exportando..." : "Exportar"}
+                  </button>
+                </td>
+
+                <td className="py-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => onEliminar(texto)}
+                    className="px-3 h-9 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+                    aria-label={`Eliminar el texto ${texto.title}`}
+                  >
+                    Eliminar
                   </button>
                 </td>
               </tr>
@@ -563,23 +776,22 @@ function TextosGuardadosTab({
           )}
         </tbody>
       </table>
+
       <BotonAyuda modulo="Textos guardados" />
     </div>
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Pestañas del usuario: Edición, Historial y Valoraciones.
-// ──────────────────────────────────────────────────────────────────────────
-
 function EdicionTab({
   texto,
   onRegresar,
   onTextoActualizado,
+  onExportarTexto,
 }: {
   texto: TextoGuardado;
   onRegresar: () => void;
   onTextoActualizado: (texto: TextoGuardado) => void;
+  onExportarTexto: (texto: TextoGuardado) => Promise<void>;
 }) {
   const [originalText, setOriginalText] = useState(texto.original_text);
   const [simplifiedText, setSimplifiedText] = useState(texto.simplified_text);
@@ -591,6 +803,7 @@ function EdicionTab({
   const [estrellas, setEstrellas] = useState(0);
   const [hoverEstrellas, setHoverEstrellas] = useState(0);
   const [errorGuardar, setErrorGuardar] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
 
   const originalRef = useRef<HTMLTextAreaElement | null>(null);
   const wordCount = countWords(originalText);
@@ -600,6 +813,7 @@ function EdicionTab({
     setErrorMsg("");
     setSuccessMsg("");
     originalRef.current?.focus();
+
     try {
       if (!navigator.clipboard?.readText) {
         setErrorMsg(
@@ -607,11 +821,14 @@ function EdicionTab({
         );
         return;
       }
+
       const t = await navigator.clipboard.readText();
+
       if (!t.trim()) {
         setErrorMsg("El portapapeles está vacío.");
         return;
       }
+
       setOriginalText(t);
     } catch {
       setErrorMsg(
@@ -622,11 +839,14 @@ function EdicionTab({
 
   const handleSimplificar = async () => {
     if (!originalText.trim() || isOverLimit || isSimplifying) return;
+
     try {
       setIsSimplifying(true);
       setErrorMsg("");
       setSuccessMsg("");
+
       const result = await simplifyText(originalText.trim());
+
       setSimplifiedText(result.simplifiedText);
     } catch (e: any) {
       console.error("Error simplificando:", e);
@@ -639,15 +859,27 @@ function EdicionTab({
     }
   };
 
-  const handleExportar = () => {
-    if (!simplifiedText) return;
-    const blob = new Blob([simplifiedText], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "texto-simplificado.txt";
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportar = async () => {
+    if (!simplifiedText.trim() || isExporting) return;
+
+    try {
+      setIsExporting(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      await onExportarTexto({
+        ...texto,
+        original_text: originalText,
+        simplified_text: simplifiedText,
+      });
+
+      setSuccessMsg("Texto exportado y registrado correctamente.");
+    } catch (error) {
+      console.error("Error exportando desde edición:", error);
+      setErrorMsg("No se pudo exportar el texto.");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const abrirModalGuardar = () => {
@@ -655,6 +887,7 @@ function EdicionTab({
       setErrorMsg("No hay texto simplificado para guardar.");
       return;
     }
+
     setErrorMsg("");
     setSuccessMsg("");
     setEstrellas(0);
@@ -672,16 +905,18 @@ function EdicionTab({
 
   const confirmarGuardar = async () => {
     const usuario = getUsuarioActual();
+
     if (!usuario?.id) {
       setErrorGuardar("No se pudo identificar al usuario. Inicia sesión de nuevo.");
       return;
     }
+
     try {
       setIsSaving(true);
       setErrorGuardar("");
+
       const ahora = new Date().toISOString();
 
-      // Actualizar el original + el simplificado en simplifications (si está enlazado).
       if (texto.simplification_id != null) {
         const { error: eSimp } = await supabase
           .from("simplifications")
@@ -691,17 +926,16 @@ function EdicionTab({
             updated_at: ahora,
           })
           .eq("id", texto.simplification_id);
+
         if (eSimp) throw eSimp;
       }
 
-      // Nueva versión (snapshot del texto simplificado).
       await insertarFila("simplification_versions", {
         saved_simplification_id: texto.id,
         content: simplifiedText,
         created_at: ahora,
       });
 
-      // Nueva valoración con las estrellas elegidas.
       await insertarFila("ratings", {
         saved_simplification_id: texto.id,
         user_id: usuario.id,
@@ -740,11 +974,18 @@ function EdicionTab({
       <h3 className="font-lexend font-semibold text-xl md:text-2xl leading-[150%] text-black mb-2">
         Simplificador de Texto
       </h3>
+
       <p className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%] mb-2">
         Ingrese un texto menor a {WORD_LIMIT} palabras
       </p>
+
       <div className="border border-input-border bg-white px-4 py-3 mb-2">
+        <label htmlFor="texto-original-edicion" className="sr-only">
+          Texto original para simplificar
+        </label>
+
         <textarea
+          id="texto-original-edicion"
           ref={originalRef}
           value={originalText}
           onChange={(e) => {
@@ -756,6 +997,7 @@ function EdicionTab({
           className="w-full h-24 font-inter font-normal text-base text-[#1E1E1E] leading-[140%] outline-none resize-none bg-transparent"
         />
       </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
         <span
           className={`font-lexend text-[13px] ${
@@ -764,6 +1006,7 @@ function EdicionTab({
         >
           {wordCount}/{WORD_LIMIT} palabras
         </span>
+
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -773,6 +1016,7 @@ function EdicionTab({
           >
             Pegar
           </button>
+
           <button
             type="button"
             onClick={handleSimplificar}
@@ -784,8 +1028,9 @@ function EdicionTab({
           </button>
         </div>
       </div>
+
       {isOverLimit && (
-        <p className="text-sm text-red-600 font-inter mb-4">
+        <p className="text-sm text-red-600 font-inter mb-4" role="alert">
           El texto supera el límite permitido de {WORD_LIMIT} palabras.
         </p>
       )}
@@ -793,11 +1038,18 @@ function EdicionTab({
       <h3 className="font-lexend font-semibold text-xl md:text-2xl leading-[150%] text-black mb-2 mt-6">
         Resultado de la Simplificación
       </h3>
+
       <p className="font-inter font-normal text-base text-[#1E1E1E] leading-[140%] mb-2">
         Texto simplificado
       </p>
+
       <div className="border border-input-border bg-white px-4 py-3 mb-2">
+        <label htmlFor="texto-simplificado-edicion" className="sr-only">
+          Texto simplificado editable
+        </label>
+
         <textarea
+          id="texto-simplificado-edicion"
           value={simplifiedText}
           onChange={(e) => setSimplifiedText(e.target.value)}
           placeholder="Aquí aparece el texto simplificado. Puedes editarlo."
@@ -819,12 +1071,13 @@ function EdicionTab({
           <button
             type="button"
             onClick={handleExportar}
-            disabled={!simplifiedText.trim()}
+            disabled={!simplifiedText.trim() || isExporting}
             className="text-white font-inter font-medium text-base px-4 h-10 flex items-center justify-center transition-colors rounded disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: "hsl(var(--navy))" }}
           >
-            Exportar texto
+            {isExporting ? "Exportando..." : "Exportar texto"}
           </button>
+
           <button
             type="button"
             onClick={abrirModalGuardar}
@@ -838,58 +1091,74 @@ function EdicionTab({
       </div>
 
       {errorMsg && (
-        <p className="text-sm text-red-600 font-inter mt-3 text-right">
+        <p className="text-sm text-red-600 font-inter mt-3 text-right" role="alert">
           {errorMsg}
         </p>
       )}
+
       {successMsg && (
-        <p className="text-sm text-green-600 font-inter mt-3 text-right">
+        <p
+          className="text-sm text-green-600 font-inter mt-3 text-right"
+          role="status"
+        >
           {successMsg}
         </p>
       )}
 
-      {/* Modal de valoración al guardar */}
       {mostrarModalGuardar && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-guardar-simplificacion"
           onClick={cancelarGuardar}
         >
           <div
             className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-1">
+            <h2
+              id="titulo-guardar-simplificacion"
+              className="font-inter font-semibold text-xl text-black mb-1"
+            >
               Guardar simplificación
             </h2>
+
             <p className="font-inter font-normal text-sm text-[#666] mb-5">
               Valora esta versión del texto.
             </p>
 
-            <label className="font-inter font-normal text-base text-[#1E1E1E] block mb-2">
-              Valoración
-            </label>
-            <div className="flex gap-2">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setEstrellas(n)}
-                  onMouseEnter={() => setHoverEstrellas(n)}
-                  onMouseLeave={() => setHoverEstrellas(0)}
-                  aria-label={`${n} estrella${n > 1 ? "s" : ""}`}
-                  className="text-3xl leading-none transition-colors focus:outline-none"
-                  style={{
-                    color:
-                      n <= (hoverEstrellas || estrellas) ? "#f5b301" : "#cbd5e1",
-                  }}
-                >
-                  ★
-                </button>
-              ))}
-            </div>
+            <fieldset>
+              <legend className="font-inter font-normal text-base text-[#1E1E1E] block mb-2">
+                Valoración
+              </legend>
+
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setEstrellas(n)}
+                    onMouseEnter={() => setHoverEstrellas(n)}
+                    onMouseLeave={() => setHoverEstrellas(0)}
+                    aria-label={`${n} estrella${n > 1 ? "s" : ""}`}
+                    aria-pressed={estrellas === n}
+                    className="text-3xl leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                    style={{
+                      color:
+                        n <= (hoverEstrellas || estrellas)
+                          ? "#f5b301"
+                          : "#cbd5e1",
+                    }}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </fieldset>
 
             {errorGuardar && (
-              <p className="font-inter text-sm text-red-600 mt-3">
+              <p className="font-inter text-sm text-red-600 mt-3" role="alert">
                 {errorGuardar}
               </p>
             )}
@@ -903,6 +1172,7 @@ function EdicionTab({
               >
                 Cancelar
               </button>
+
               <button
                 type="button"
                 onClick={confirmarGuardar}
@@ -916,6 +1186,7 @@ function EdicionTab({
           </div>
         </div>
       )}
+
       <BotonAyuda modulo="Textos Guardados" />
     </div>
   );
@@ -946,19 +1217,23 @@ function HistorialTab({
     tipo: "restaurar" | "eliminar";
     version: Version;
   } | null>(null);
+
   const [procesando, setProcesando] = useState(false);
   const [errorAccion, setErrorAccion] = useState("");
 
   const cargar = useCallback(async () => {
     setCargando(true);
     setErrorMsg("");
+
     try {
       const { data, error } = await supabase
         .from("simplification_versions")
         .select("id, content, created_at")
         .eq("saved_simplification_id", texto.id)
         .order("created_at", { ascending: true });
+
       if (error) throw error;
+
       const filas: Version[] = (data ?? []).map((v: any, i: number) => ({
         id: v.id,
         numero: i + 1,
@@ -966,8 +1241,6 @@ function HistorialTab({
         content: v.content ?? "",
       }));
 
-      // Respaldo: si todavía no hay versiones guardadas, mostrar el texto
-      // simplificado original como "Versión 1" (id = -1: no es una fila real).
       if (filas.length === 0 && (texto.simplified_text ?? "").trim() !== "") {
         filas.push({
           id: -1,
@@ -984,7 +1257,7 @@ function HistorialTab({
     } finally {
       setCargando(false);
     }
-  }, [texto.id]);
+  }, [texto.id, texto.created_at, texto.simplified_text]);
 
   useEffect(() => {
     cargar();
@@ -992,7 +1265,9 @@ function HistorialTab({
 
   const confirmarAccion = async () => {
     if (!accion) return;
+
     const { tipo, version } = accion;
+
     try {
       setProcesando(true);
       setErrorAccion("");
@@ -1002,21 +1277,24 @@ function HistorialTab({
           .from("simplification_versions")
           .delete()
           .eq("id", version.id);
+
         if (error) throw error;
       } else {
-        // Restaurar: crear una NUEVA versión con el contenido de la elegida.
         const ahora = new Date().toISOString();
+
         await insertarFila("simplification_versions", {
           saved_simplification_id: texto.id,
           content: version.content,
           created_at: ahora,
         });
+
         if (texto.simplification_id != null) {
           await supabase
             .from("simplifications")
             .update({ simplified_text: version.content, updated_at: ahora })
             .eq("id", texto.simplification_id);
         }
+
         onTextoActualizado({
           ...texto,
           simplified_text: version.content,
@@ -1043,19 +1321,30 @@ function HistorialTab({
       {cargando ? (
         <p className="font-inter text-base text-[#666]">Cargando historial...</p>
       ) : errorMsg ? (
-        <p className="font-inter text-base text-red-600">{errorMsg}</p>
+        <p className="font-inter text-base text-red-600" role="alert">
+          {errorMsg}
+        </p>
       ) : versiones.length === 0 ? (
         <p className="font-inter text-base text-[#666]">
           Este texto todavía no tiene versiones.
         </p>
       ) : (
         <table className="w-full text-left border-collapse font-inter text-base text-[#1E1E1E]">
+          <caption className="sr-only">
+            Historial de versiones del texto {texto.title}.
+          </caption>
+
           <thead>
             <tr className="border-b border-gray-300">
-              <th className="py-3 font-medium">Versión #</th>
-              <th className="py-3 font-medium">Fecha Creación</th>
-              <th className="py-3 font-medium">Fecha última edición</th>
-              <th className="py-3 font-medium text-center">Acciones</th>
+              <th scope="col" className="py-3 font-medium">
+                Versión #
+              </th>
+              <th scope="col" className="py-3 font-medium">
+                Fecha de creación
+              </th>
+              <th scope="col" className="py-3 font-medium text-center">
+                Acciones
+              </th>
             </tr>
           </thead>
 
@@ -1064,17 +1353,23 @@ function HistorialTab({
               <tr key={item.id} className="border-b border-gray-300">
                 <td className="py-3">Versión {item.numero}</td>
                 <td className="py-3">{formatearFecha(item.creacion)}</td>
-                <td className="py-3">—</td>
+
                 <td className="py-3">
-                  <div className="flex gap-4 justify-center">
+                  <div
+                    className="flex flex-wrap gap-2 justify-center"
+                    role="group"
+                    aria-label={`Acciones para la Versión ${item.numero}`}
+                  >
                     <button
                       type="button"
                       onClick={() => setVersionAVer(item)}
-                      className="text-xl text-black hover:text-[#002855] transition-colors"
-                      title="Ver"
+                      className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                      style={{ backgroundColor: "hsl(var(--navy))" }}
+                      aria-label={`Ver contenido de la Versión ${item.numero}`}
                     >
-                      👁
+                      Ver
                     </button>
+
                     {item.id !== -1 && (
                       <>
                         <button
@@ -1083,21 +1378,23 @@ function HistorialTab({
                             setErrorAccion("");
                             setAccion({ tipo: "restaurar", version: item });
                           }}
-                          className="text-xl text-black hover:text-[#002855] transition-colors"
-                          title="Restaurar"
+                          className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                          style={{ backgroundColor: "hsl(var(--navy))" }}
+                          aria-label={`Restaurar la Versión ${item.numero}`}
                         >
-                          🔄
+                          Restaurar
                         </button>
+
                         <button
                           type="button"
                           onClick={() => {
                             setErrorAccion("");
                             setAccion({ tipo: "eliminar", version: item });
                           }}
-                          className="text-xl text-black hover:text-red-600 transition-colors"
-                          title="Eliminar"
+                          className="px-3 h-9 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+                          aria-label={`Eliminar la Versión ${item.numero}`}
                         >
-                          🗑
+                          Eliminar
                         </button>
                       </>
                     )}
@@ -1120,27 +1417,35 @@ function HistorialTab({
         </button>
       </div>
 
-      {/* Modal Ver (consultar el contenido de la versión) */}
       {versionAVer && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-version"
           onClick={() => setVersionAVer(null)}
         >
           <div
             className="bg-white w-full max-w-[560px] mx-4 p-6 shadow-lg rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-1">
+            <h2
+              id="titulo-version"
+              className="font-inter font-semibold text-xl text-black mb-1"
+            >
               Versión {versionAVer.numero}
             </h2>
+
             <p className="font-inter font-normal text-sm text-[#666] mb-4">
               Creada el {formatearFecha(versionAVer.creacion)}
             </p>
+
             <div className="border border-input-border bg-[#F5F5F5] p-4 max-h-[320px] overflow-y-auto">
               <p className="font-inter text-base text-[#1E1E1E] leading-[140%] whitespace-pre-wrap">
                 {versionAVer.content || "(sin contenido)"}
               </p>
             </div>
+
             <div className="flex justify-end mt-6">
               <button
                 type="button"
@@ -1155,10 +1460,12 @@ function HistorialTab({
         </div>
       )}
 
-      {/* Modal confirmar restaurar / eliminar */}
       {accion && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-accion-historial"
           onClick={() => {
             if (!procesando) setAccion(null);
           }}
@@ -1167,11 +1474,15 @@ function HistorialTab({
             className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="font-inter font-semibold text-xl text-black mb-1">
+            <h2
+              id="titulo-accion-historial"
+              className="font-inter font-semibold text-xl text-black mb-1"
+            >
               {accion.tipo === "restaurar"
                 ? "Restaurar versión"
                 : "Eliminar versión"}
             </h2>
+
             <p className="font-inter font-normal text-base text-[#1E1E1E] mb-5">
               {accion.tipo === "restaurar"
                 ? `Se creará una versión nueva con el contenido de la Versión ${accion.version.numero}. El historial actual no se borra.`
@@ -1179,7 +1490,9 @@ function HistorialTab({
             </p>
 
             {errorAccion && (
-              <p className="font-inter text-sm text-red-600 mb-3">{errorAccion}</p>
+              <p className="font-inter text-sm text-red-600 mb-3" role="alert">
+                {errorAccion}
+              </p>
             )}
 
             <div className="flex justify-end gap-3 mt-6">
@@ -1191,6 +1504,7 @@ function HistorialTab({
               >
                 Cancelar
               </button>
+
               <button
                 type="button"
                 onClick={confirmarAccion}
@@ -1214,6 +1528,7 @@ function HistorialTab({
           </div>
         </div>
       )}
+
       <BotonAyuda modulo="Textos guardados" />
     </div>
   );
@@ -1235,19 +1550,23 @@ function ValoracionesTab({
   const cargar = useCallback(async () => {
     setCargando(true);
     setErrorMsg("");
+
     try {
       const { data, error } = await supabase
         .from("ratings")
         .select("id, score, created_at")
         .eq("saved_simplification_id", texto.id)
         .order("created_at", { ascending: true });
+
       if (error) throw error;
+
       const filas = (data ?? []).map((r: any, i: number) => ({
         id: r.id,
         numero: i + 1,
         fecha: r.created_at,
         score: Number(r.score) || 0,
       }));
+
       setValoraciones(filas);
     } catch (e: any) {
       console.error("Error cargando valoraciones:", e);
@@ -1273,20 +1592,34 @@ function ValoracionesTab({
       </h2>
 
       {cargando ? (
-        <p className="font-inter text-base text-[#666]">Cargando valoraciones...</p>
+        <p className="font-inter text-base text-[#666]">
+          Cargando valoraciones...
+        </p>
       ) : errorMsg ? (
-        <p className="font-inter text-base text-red-600">{errorMsg}</p>
+        <p className="font-inter text-base text-red-600" role="alert">
+          {errorMsg}
+        </p>
       ) : valoraciones.length === 0 ? (
         <p className="font-inter text-base text-[#666]">
           Este texto todavía no tiene valoraciones.
         </p>
       ) : (
         <table className="w-full text-left border-collapse font-inter text-base text-[#1E1E1E]">
+          <caption className="sr-only">
+            Valoraciones registradas para el texto {texto.title}.
+          </caption>
+
           <thead>
             <tr className="border-b border-gray-300">
-              <th className="py-3 font-medium">Título</th>
-              <th className="py-3 font-medium">Fecha</th>
-              <th className="py-3 font-medium text-center">Valoración</th>
+              <th scope="col" className="py-3 font-medium">
+                Título
+              </th>
+              <th scope="col" className="py-3 font-medium">
+                Fecha
+              </th>
+              <th scope="col" className="py-3 font-medium text-center">
+                Valoración
+              </th>
             </tr>
           </thead>
 
@@ -1295,7 +1628,10 @@ function ValoracionesTab({
               <tr key={item.id} className="border-b border-gray-300">
                 <td className="py-3">Versión {item.numero}</td>
                 <td className="py-3">{formatearFecha(item.fecha)}</td>
-                <td className="py-3 text-center tracking-[2px]">
+                <td
+                  className="py-3 text-center tracking-[2px]"
+                  aria-label={`${item.score} de 5 estrellas`}
+                >
                   {estrellas(item.score)}
                 </td>
               </tr>
@@ -1314,6 +1650,7 @@ function ValoracionesTab({
           Regresar
         </button>
       </div>
+
       <BotonAyuda modulo="Textos guardados" />
     </div>
   );
