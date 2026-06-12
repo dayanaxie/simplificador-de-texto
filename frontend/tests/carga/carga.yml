@@ -1,0 +1,44 @@
+config:
+  target: "{{$env.VITE_SUPABASE_URL}}"
+  phases:
+    # Fase 1: carga gradual — sube de 1 a 10 usuarios en 30 segundos
+    - duration: 30
+      arrivalRate: 1
+      rampTo: 10
+      name: "Carga gradual"
+    # Fase 2: carga sostenida — 10 usuarios por 60 segundos
+    - duration: 60
+      arrivalRate: 10
+      name: "Carga sostenida"
+  defaults:
+    headers:
+      apikey: "{{ $env.VITE_SUPABASE_ANON_KEY }}"
+      Authorization: "Bearer {{ $env.VITE_SUPABASE_ANON_KEY }}"
+      Content-Type: "application/json"
+
+scenarios:
+  - name: "Consulta de usuarios concurrentes"
+    flow:
+      - get:
+          url: "/rest/v1/users?select=id,name,email,role,is_active"
+          expect:
+            - statusCode: 200
+
+  - name: "Consulta de anuncios vigentes"
+    flow:
+      - get:
+          url: "/rest/v1/announcements?select=id,title,description"
+          expect:
+            - statusCode: 200
+
+  - name: "Consulta de métricas"
+    flow:
+      - get:
+          url: "/rest/v1/user_statistics?select=id,user_id,word_count"
+          expect:
+            - statusCode: 200
+
+
+
+
+            

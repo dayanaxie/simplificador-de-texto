@@ -1,0 +1,36 @@
+config:
+  target: "{{ $env.VITE_SUPABASE_URL }}"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "5 usuarios simplificando simultáneamente"
+  defaults:
+    headers:
+      apikey: "{{ $env.VITE_SUPABASE_ANON_KEY }}"
+      Authorization: "Bearer {{ $env.VITE_SUPABASE_ANON_KEY }}"
+      Content-Type: "application/json"
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Guardar simplificación"
+    flow:
+      - post:
+          url: "/rest/v1/saved_simplifications"
+          json:
+            user_id: 1
+            title: "Texto de prueba de carga"
+            original_text: "El estudiante debe comprender los conceptos."
+            simplified_text: "El estudiante debe entender las ideas."
+          expect:
+            - statusCode: 201
+
+  - name: "Leer simplificaciones guardadas"
+    flow:
+      - get:
+          url: "/rest/v1/saved_simplifications?user_id=eq.1&select=id,title,created_at"
+          expect:
+            - statusCode: 200
+
+
+
