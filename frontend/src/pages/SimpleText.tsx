@@ -5,6 +5,7 @@ import BotonAyuda from "../components/BotonAyuda";
 
 const WORD_LIMIT_DEFAULT = 500;
 const REPORT_TABLE = "reports";
+const GLOSSARY_TABLE = "glossary";
 
 function countWords(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
@@ -28,6 +29,12 @@ const formatearFecha = (iso: string) => {
 
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
+};
+
+const limpiarPalabraSeleccionada = (texto: string) => {
+  return texto
+    .trim()
+    .replace(/[.,;:!?¿¡()"']/g, "");
 };
 
 async function siguienteId(tabla: string): Promise<number> {
@@ -79,6 +86,13 @@ export default function Index() {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportDescription, setReportDescription] = useState("");
   const [isSendingReport, setIsSendingReport] = useState(false);
+  const [isConfirmReportModalOpen, setIsConfirmReportModalOpen] =
+    useState(false);
+
+  const [selectedWord, setSelectedWord] = useState("");
+  const [glossaryDefinition, setGlossaryDefinition] = useState("");
+  const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
+  const [isSearchingWord, setIsSearchingWord] = useState(false);
 
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -167,6 +181,69 @@ export default function Index() {
     },
     [lastSimplificationId, inputText, simplifiedText]
   );
+
+  const consultarPalabraGlosario = useCallback(async (palabra: string) => {
+    const palabraLimpia = limpiarPalabraSeleccionada(palabra);
+
+    if (!palabraLimpia) return;
+
+    try {
+      setIsSearchingWord(true);
+      setSelectedWord(palabraLimpia);
+      setGlossaryDefinition("");
+
+      const { data, error } = await supabase
+        .from(GLOSSARY_TABLE)
+        .select("word, definition")
+        .ilike("word", palabraLimpia)
+        .limit(1);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        setGlossaryDefinition("Palabra no encontrada en el glosario.");
+      } else {
+        setSelectedWord(data[0].word);
+        setGlossaryDefinition(data[0].definition);
+      }
+
+      setIsGlossaryModalOpen(true);
+    } catch {
+      setSelectedWord(palabraLimpia);
+      setGlossaryDefinition("No se pudo consultar el glosario.");
+      setIsGlossaryModalOpen(true);
+    } finally {
+      setIsSearchingWord(false);
+    }
+  }, []);
+
+  const handleSeleccionTextoSimplificado = useCallback(() => {
+    const textarea = outputTextareaRef.current;
+
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+
+    if (start === end) return;
+
+    const seleccion = simplifiedText.slice(start, end).trim();
+
+    if (!seleccion) return;
+
+    const palabras = seleccion.split(/\s+/);
+
+    if (palabras.length > 1) {
+      setSelectedWord("");
+      setGlossaryDefinition(
+        "Selecciona solo una palabra para consultar el glosario."
+      );
+      setIsGlossaryModalOpen(true);
+      return;
+    }
+
+    consultarPalabraGlosario(seleccion);
+  }, [simplifiedText, consultarPalabraGlosario]);
 
   const handlePaste = useCallback(async () => {
     setErrorMessage("");
@@ -447,25 +524,24 @@ export default function Index() {
     if (isSendingReport) return;
 
     setIsReportModalOpen(false);
+    setIsConfirmReportModalOpen(false);
     setReportDescription("");
   }, [isSendingReport]);
 
-  const handleSendReport = useCallback(async () => {
+  const handleSendReport = useCallback(() => {
     if (!reportDescription.trim() || isSendingReport) return;
 
-    const confirmado = window.confirm(
-      "¿Estás segura de que deseas enviar este reporte?"
-    );
+    setIsConfirmReportModalOpen(true);
+  }, [reportDescription, isSendingReport]);
 
-    if (!confirmado) {
-      return;
-    }
+  const confirmarEnvioReporte = useCallback(async () => {
+    if (!reportDescription.trim() || isSendingReport) return;
 
     const usuarioGuardado = localStorage.getItem("usuario");
     const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
 
     if (!usuario?.id) {
-      alert("No se encontró el usuario activo.");
+      setIsConfirmReportModalOpen(false);
       setErrorMessage("No se encontró el usuario activo.");
       setSuccessMessage("");
       return;
@@ -486,14 +562,14 @@ export default function Index() {
         created_at: new Date().toISOString(),
       });
 
+      setIsConfirmReportModalOpen(false);
       setIsReportModalOpen(false);
       setReportDescription("");
 
-      alert("Reporte enviado correctamente.");
       setSuccessMessage("Reporte enviado correctamente.");
       setErrorMessage("");
     } catch {
-      alert("No se pudo enviar el reporte.");
+      setIsConfirmReportModalOpen(false);
       setErrorMessage("No se pudo enviar el reporte.");
       setSuccessMessage("");
     } finally {
@@ -561,8 +637,12 @@ export default function Index() {
     setSuccessMessage("");
     setReportDescription("");
     setIsReportModalOpen(false);
+    setIsConfirmReportModalOpen(false);
     setIsSendingReport(false);
     setIsExporting(false);
+    setIsGlossaryModalOpen(false);
+    setSelectedWord("");
+    setGlossaryDefinition("");
 
     setLastSimplificationId(null);
     setIsSaveModalOpen(false);
@@ -669,10 +749,17 @@ export default function Index() {
                 id="texto-simplificado"
                 ref={outputTextareaRef}
                 readOnly
+                onMouseUp={handleSeleccionTextoSimplificado}
+                onKeyUp={handleSeleccionTextoSimplificado}
                 className="w-full min-h-[90px] sm:min-h-[105px] border border-[#D9D9D9] bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] resize-y outline-none focus:border-[#002855] transition-colors"
                 placeholder="Texto simplificado"
                 value={simplifiedText}
               />
+
+              <p className="font-inter text-sm text-[#666]">
+                Selecciona una palabra del texto simplificado para consultar su
+                significado en el glosario.
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-3 justify-end">
@@ -956,7 +1043,123 @@ export default function Index() {
                 disabled={!reportDescription.trim() || isSendingReport}
                 className="px-6 py-2 font-inter font-medium text-sm text-white bg-[#002855] hover:bg-[#003d80] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
               >
-                {isSendingReport ? "Enviando..." : "Enviar"}
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isConfirmReportModalOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-confirmar-reporte"
+          onClick={() => {
+            if (!isSendingReport) setIsConfirmReportModalOpen(false);
+          }}
+        >
+          <div
+            className="bg-white w-full max-w-[440px] p-6 shadow-xl rounded-lg border border-[#E0E0E0]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-11 h-11 rounded-full bg-[#EAF1F8] flex items-center justify-center shrink-0">
+                <span className="text-[#002855] text-2xl" aria-hidden="true">
+                  !
+                </span>
+              </div>
+
+              <div className="flex-1">
+                <h2
+                  id="titulo-confirmar-reporte"
+                  className="font-inter font-semibold text-xl text-black mb-2"
+                >
+                  Confirmar reporte
+                </h2>
+
+                <p className="font-inter text-base text-[#1E1E1E] leading-[140%]">
+                  ¿Estás segura de que deseas enviar este reporte? Una vez
+                  enviado, quedará registrado para revisión.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setIsConfirmReportModalOpen(false)}
+                disabled={isSendingReport}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmarEnvioReporte}
+                disabled={isSendingReport}
+                className="px-6 py-2 font-inter font-medium text-sm text-white bg-[#002855] hover:bg-[#003d80] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                {isSendingReport ? "Enviando..." : "Sí, enviar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isGlossaryModalOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-glosario"
+          onClick={() => setIsGlossaryModalOpen(false)}
+        >
+          <div
+            className="bg-white w-full max-w-[480px] p-6 shadow-xl rounded-lg border border-[#E0E0E0]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-11 h-11 rounded-full bg-[#EAF1F8] flex items-center justify-center shrink-0">
+                <span className="text-[#002855] text-xl" aria-hidden="true">
+                  📖
+                </span>
+              </div>
+
+              <div className="flex-1">
+                <h2
+                  id="titulo-glosario"
+                  className="font-inter font-semibold text-xl text-black mb-2"
+                >
+                  Glosario de palabras
+                </h2>
+
+                {selectedWord && (
+                  <p className="font-inter text-sm text-[#666] mb-3">
+                    Palabra consultada:{" "}
+                    <span className="font-semibold text-[#1E1E1E]">
+                      {selectedWord}
+                    </span>
+                  </p>
+                )}
+
+                <p className="font-inter text-base text-[#1E1E1E] leading-[140%] whitespace-pre-wrap">
+                  {isSearchingWord
+                    ? "Buscando significado..."
+                    : glossaryDefinition}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <button
+                type="button"
+                onClick={() => setIsGlossaryModalOpen(false)}
+                className="px-6 py-2 font-inter font-medium text-sm text-white bg-[#002855] hover:bg-[#003d80] transition-colors rounded"
+              >
+                Cerrar
               </button>
             </div>
           </div>
