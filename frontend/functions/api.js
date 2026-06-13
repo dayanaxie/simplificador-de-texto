@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const OLLAMA_URL = process.env.OLLAMA_URL;
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3:0.6b";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL;
 
 const MAX_WORDS = Number(process.env.MAX_WORDS || 500);
 const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 25000);
