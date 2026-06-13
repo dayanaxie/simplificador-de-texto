@@ -4,7 +4,7 @@
   publish = "dist/spa"
 
 [functions]
-  directory = "frontend/netlify/functions"
+  directory = "netlify/functions"
   node_bundler = "esbuild"
   external_node_modules = ["express"]
 
