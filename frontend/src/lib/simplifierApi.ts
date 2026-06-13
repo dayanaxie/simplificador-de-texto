@@ -1,9 +1,5 @@
-const API_URL = import.meta.env.VITE_API_URL ;
-
-console.log("API_URL usada:", API_URL);
-
 export async function simplifyText(text: string) {
-  const response = await fetch(`${API_URL}/api/simplify`, {
+  const response = await fetch(`/api/simplify`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
