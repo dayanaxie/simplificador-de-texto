@@ -24,6 +24,14 @@ interface Categoria {
   name: string;
 }
 
+interface WordEntry {
+  id?: number;
+  user_id?: number;
+  word: string | null;
+  preferred_replacement: string | null;
+  keep_original: boolean | null;
+}
+
 const formatearFecha = (iso: string) => {
   if (!iso) return "";
 
@@ -36,6 +44,55 @@ const limpiarPalabraSeleccionada = (texto: string) => {
     .trim()
     .replace(/[.,;:!?¿¡()"']/g, "");
 };
+
+const escapeRegex = (texto: string): string => {
+  return texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+async function obtenerDiccionarioPersonal(userId: number): Promise<WordEntry[]> {
+  try {
+    const { data, error } = await supabase
+      .from("personal_dictionary")
+      .select("id, user_id, word, preferred_replacement, keep_original")
+      .eq("user_id", userId);
+
+    if (error) throw error;
+
+    return data ?? [];
+  } catch (error) {
+    console.error("Error consultando el diccionario personal:", error);
+    return [];
+  }
+}
+
+function aplicarDiccionarioPersonal(
+  texto: string,
+  diccionario: WordEntry[]
+): string {
+  if (!texto.trim() || diccionario.length === 0) return texto;
+
+  let textoFinal = texto;
+
+  const diccionarioOrdenado = [...diccionario].sort(
+    (a, b) => (b.word ?? "").length - (a.word ?? "").length
+  );
+
+  for (const entrada of diccionarioOrdenado) {
+    const palabra = entrada.word?.trim();
+    const reemplazo = entrada.preferred_replacement?.trim();
+
+    if (!palabra || !reemplazo || entrada.keep_original) continue;
+
+    const regex = new RegExp(
+      `(^|[^\\p{L}\\p{N}_])(${escapeRegex(palabra)})(?=$|[^\\p{L}\\p{N}_])`,
+      "giu"
+    );
+
+    textoFinal = textoFinal.replace(regex, `$1${reemplazo}`);
+  }
+
+  return textoFinal;
+}
 
 async function siguienteId(tabla: string): Promise<number> {
   const { data, error } = await supabase
@@ -292,11 +349,20 @@ export default function Index() {
       setLastSimplificationId(null);
 
       const result = await simplifyText(inputText.trim());
-
-      setSimplifiedText(result.simplifiedText);
+      let finalSimplifiedText = result.simplifiedText;
 
       const usuarioGuardado = localStorage.getItem("usuario");
       const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
+
+      if (usuario?.id) {
+        const diccionarioPersonal = await obtenerDiccionarioPersonal(usuario.id);
+        finalSimplifiedText = aplicarDiccionarioPersonal(
+          finalSimplifiedText,
+          diccionarioPersonal
+        );
+      }
+
+      setSimplifiedText(finalSimplifiedText);
 
       if (usuario?.id) {
         const { data, error } = await supabase
@@ -305,7 +371,7 @@ export default function Index() {
             {
               user_id: usuario.id,
               original_text: result.originalText,
-              simplified_text: result.simplifiedText,
+              simplified_text: finalSimplifiedText,
               status: "completed",
             },
           ])
