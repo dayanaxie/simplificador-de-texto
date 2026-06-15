@@ -19,6 +19,7 @@ interface TextoGuardado {
   title: string;
   created_at: string | null;
   category: string;
+  category_id: number | null;
   original_text: string;
   simplified_text: string;
   simplification_updated_at: string | null;
@@ -188,7 +189,8 @@ export default function TextosGuardados() {
         savedIds.length > 0
           ? await supabase
               .from("simplification_categories")
-              .select("saved_simplification_id, category_id")
+              .select("saved_simplification_id, category_id, user_id")
+              .eq("user_id", usuario.id)
               .in("saved_simplification_id", savedIds)
           : { data: [], error: null };
 
@@ -202,7 +204,8 @@ export default function TextosGuardados() {
         categoryIds.length > 0
           ? await supabase
               .from("categories")
-              .select("id, name")
+              .select("id, name, user_id")
+              .eq("user_id", usuario.id)
               .in("id", categoryIds)
           : { data: [], error: null };
 
@@ -213,15 +216,21 @@ export default function TextosGuardados() {
         simplificationMap.set(item.id, item);
       });
 
-      const categoryMap = new Map<number, string>();
+      const categoryMap = new Map<number, { id: number; name: string }>();
       (categoriesData ?? []).forEach((item: any) => {
-        categoryMap.set(item.id, item.name);
+        categoryMap.set(item.id, {
+          id: item.id,
+          name: item.name,
+        });
       });
 
-      const relationMap = new Map<number, string>();
+      const relationMap = new Map<number, { id: number; name: string }>();
       (relationData ?? []).forEach((item: any) => {
-        const categoryName = categoryMap.get(item.category_id) ?? "Sin categoría";
-        relationMap.set(item.saved_simplification_id, categoryName);
+        const categoria = categoryMap.get(item.category_id);
+
+        if (categoria) {
+          relationMap.set(item.saved_simplification_id, categoria);
+        }
       });
 
       const textosConvertidos: TextoGuardado[] = savedRows.map((item: any) => {
@@ -229,13 +238,16 @@ export default function TextosGuardados() {
           ? simplificationMap.get(item.simplification_id)
           : null;
 
+        const categoria = relationMap.get(item.id);
+
         return {
           id: item.id,
           user_id: item.user_id,
           simplification_id: item.simplification_id,
           title: item.title ?? "Sin título",
           created_at: item.created_at,
-          category: relationMap.get(item.id) ?? "Sin categoría",
+          category: categoria?.name ?? "Sin categoría",
+          category_id: categoria?.id ?? null,
           original_text: simplification?.original_text ?? "",
           simplified_text: simplification?.simplified_text ?? "",
           simplification_updated_at:
@@ -399,7 +411,8 @@ export default function TextosGuardados() {
       await supabase
         .from("simplification_categories")
         .delete()
-        .eq("saved_simplification_id", texto.id);
+        .eq("saved_simplification_id", texto.id)
+        .eq("user_id", texto.user_id);
 
       await supabase
         .from("ratings")
@@ -519,6 +532,7 @@ export default function TextosGuardados() {
                 onRegresar={regresar}
                 onTextoActualizado={actualizarTextoLocal}
                 onExportarTexto={exportarTextoGuardado}
+                onRecargarTextos={cargarTextos}
               />
             )}
 
@@ -787,11 +801,13 @@ function EdicionTab({
   onRegresar,
   onTextoActualizado,
   onExportarTexto,
+  onRecargarTextos,
 }: {
   texto: TextoGuardado;
   onRegresar: () => void;
   onTextoActualizado: (texto: TextoGuardado) => void;
   onExportarTexto: (texto: TextoGuardado) => Promise<void>;
+  onRecargarTextos: () => Promise<void>;
 }) {
   const [originalText, setOriginalText] = useState(texto.original_text);
   const [simplifiedText, setSimplifiedText] = useState(texto.simplified_text);
@@ -805,9 +821,349 @@ function EdicionTab({
   const [errorGuardar, setErrorGuardar] = useState("");
   const [isExporting, setIsExporting] = useState(false);
 
+  const [title, setTitle] = useState(texto.title);
+  const [categorias, setCategorias] = useState<
+    { id: number; name: string; user_id?: number }[]
+  >([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState(
+    texto.category_id ? String(texto.category_id) : ""
+  );
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [isSavingData, setIsSavingData] = useState(false);
+  const [categoriaAEliminar, setCategoriaAEliminar] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const [isDeletingCategory, setIsDeletingCategory] = useState(false);
+  const [errorEliminarCategoria, setErrorEliminarCategoria] = useState("");
+
   const originalRef = useRef<HTMLTextAreaElement | null>(null);
   const wordCount = countWords(originalText);
   const isOverLimit = wordCount > WORD_LIMIT;
+
+  useEffect(() => {
+    setTitle(texto.title);
+    setSelectedCategoryId(texto.category_id ? String(texto.category_id) : "");
+    setNewCategoryName("");
+    setOriginalText(texto.original_text);
+    setSimplifiedText(texto.simplified_text);
+  }, [texto]);
+
+  useEffect(() => {
+    const cargarCategorias = async () => {
+      const usuario = getUsuarioActual();
+
+      if (!usuario?.id) {
+        setCategorias([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("categories")
+        .select("id, name, user_id")
+        .eq("user_id", usuario.id)
+        .order("name", { ascending: true });
+
+      if (!error) {
+        setCategorias(data ?? []);
+      }
+    };
+
+    cargarCategorias();
+  }, []);
+
+  const obtenerOCrearCategoria = async (): Promise<{
+    id: number | null;
+    name: string;
+  }> => {
+    const usuario = getUsuarioActual();
+
+    if (!usuario?.id) {
+      throw new Error("No se encontró el usuario activo.");
+    }
+
+    if (!selectedCategoryId) {
+      return {
+        id: null,
+        name: "Sin categoría",
+      };
+    }
+
+    if (selectedCategoryId !== "new") {
+      const categoryId = Number(selectedCategoryId);
+      const categoria = categorias.find((item) => item.id === categoryId);
+
+      return {
+        id: categoryId,
+        name: categoria?.name ?? "Sin categoría",
+      };
+    }
+
+    const nombreCategoria = newCategoryName.trim();
+
+    if (!nombreCategoria) {
+      throw new Error("Debe escribir el nombre de la nueva categoría.");
+    }
+
+    const { data: existentes, error: searchError } = await supabase
+      .from("categories")
+      .select("id, name, user_id")
+      .eq("user_id", usuario.id)
+      .ilike("name", nombreCategoria)
+      .limit(1);
+
+    if (searchError) throw searchError;
+
+    if (existentes && existentes.length > 0) {
+      return {
+        id: existentes[0].id,
+        name: existentes[0].name,
+      };
+    }
+
+    const ahora = new Date().toISOString();
+
+    const { data: nuevaCategoria, error: categoryError } = await supabase
+      .from("categories")
+      .insert([
+        {
+          name: nombreCategoria,
+          user_id: usuario.id,
+          created_at: ahora,
+        },
+      ])
+      .select("id, name, user_id")
+      .single();
+
+    if (categoryError) throw categoryError;
+
+    setCategorias((prev) =>
+      [...prev, nuevaCategoria].sort((a, b) => a.name.localeCompare(b.name))
+    );
+
+    return {
+      id: nuevaCategoria.id,
+      name: nuevaCategoria.name,
+    };
+  };
+
+  const guardarDatosTexto = async () => {
+    const usuario = getUsuarioActual();
+
+    if (!usuario?.id) {
+      setErrorMsg("No se encontró el usuario activo.");
+      setSuccessMsg("");
+      return;
+    }
+
+    if (!title.trim()) {
+      setErrorMsg("Debe escribir un título para el texto guardado.");
+      setSuccessMsg("");
+      return;
+    }
+
+    if (selectedCategoryId === "new" && !newCategoryName.trim()) {
+      setErrorMsg("Debe escribir el nombre de la nueva categoría.");
+      setSuccessMsg("");
+      return;
+    }
+
+    try {
+      setIsSavingData(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      const ahora = new Date().toISOString();
+      const categoria = await obtenerOCrearCategoria();
+
+      const { error: titleError } = await supabase
+        .from("saved_simplifications")
+        .update({ title: title.trim() })
+        .eq("id", texto.id)
+        .eq("user_id", usuario.id);
+
+      if (titleError) throw titleError;
+
+      const { error: deleteCategoryError } = await supabase
+        .from("simplification_categories")
+        .delete()
+        .eq("saved_simplification_id", texto.id)
+        .eq("user_id", usuario.id);
+
+      if (deleteCategoryError) throw deleteCategoryError;
+
+      if (categoria.id !== null) {
+        await insertarFila("simplification_categories", {
+          saved_simplification_id: texto.id,
+          category_id: categoria.id,
+          user_id: usuario.id,
+          created_at: ahora,
+        });
+      }
+
+      onTextoActualizado({
+        ...texto,
+        title: title.trim(),
+        category: categoria.name,
+        category_id: categoria.id,
+        original_text: originalText,
+        simplified_text: simplifiedText,
+      });
+
+      setSelectedCategoryId(categoria.id ? String(categoria.id) : "");
+      setNewCategoryName("");
+      setSuccessMsg("Datos del texto actualizados correctamente.");
+    } catch (e: any) {
+      console.error("Error actualizando datos del texto:", e);
+      setErrorMsg(e?.message ?? "No se pudieron actualizar los datos del texto.");
+      setSuccessMsg("");
+    } finally {
+      setIsSavingData(false);
+    }
+  };
+
+  const quitarCategoria = async () => {
+    const usuario = getUsuarioActual();
+
+    if (!usuario?.id) {
+      setErrorMsg("No se encontró el usuario activo.");
+      setSuccessMsg("");
+      return;
+    }
+
+    try {
+      setIsSavingData(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      const { error } = await supabase
+        .from("simplification_categories")
+        .delete()
+        .eq("saved_simplification_id", texto.id)
+        .eq("user_id", usuario.id);
+
+      if (error) throw error;
+
+      onTextoActualizado({
+        ...texto,
+        title: title.trim() || texto.title,
+        category: "Sin categoría",
+        category_id: null,
+        original_text: originalText,
+        simplified_text: simplifiedText,
+      });
+
+      setSelectedCategoryId("");
+      setNewCategoryName("");
+      setSuccessMsg("Categoría quitada correctamente.");
+    } catch (e: any) {
+      console.error("Error quitando categoría:", e);
+      setErrorMsg(e?.message ?? "No se pudo quitar la categoría.");
+      setSuccessMsg("");
+    } finally {
+      setIsSavingData(false);
+    }
+  };
+
+  const abrirModalEliminarCategoria = () => {
+    setErrorMsg("");
+    setSuccessMsg("");
+    setErrorEliminarCategoria("");
+
+    if (!selectedCategoryId || selectedCategoryId === "new") {
+      setErrorMsg("Debe seleccionar una categoría existente para eliminar.");
+      return;
+    }
+
+    const categoryId = Number(selectedCategoryId);
+
+    if (Number.isNaN(categoryId)) {
+      setErrorMsg("La categoría seleccionada no es válida.");
+      return;
+    }
+
+    const categoria = categorias.find((item) => item.id === categoryId);
+
+    if (!categoria) {
+      setErrorMsg("No se encontró la categoría seleccionada.");
+      return;
+    }
+
+    setCategoriaAEliminar({
+      id: categoria.id,
+      name: categoria.name,
+    });
+  };
+
+  const cerrarModalEliminarCategoria = () => {
+    if (isDeletingCategory) return;
+
+    setCategoriaAEliminar(null);
+    setErrorEliminarCategoria("");
+  };
+
+  const confirmarEliminarCategoria = async () => {
+    const usuario = getUsuarioActual();
+
+    if (!usuario?.id) {
+      setErrorEliminarCategoria("No se encontró el usuario activo.");
+      return;
+    }
+
+    if (!categoriaAEliminar) return;
+
+    try {
+      setIsDeletingCategory(true);
+      setIsSavingData(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+      setErrorEliminarCategoria("");
+
+      const { error: relationError } = await supabase
+        .from("simplification_categories")
+        .delete()
+        .eq("category_id", categoriaAEliminar.id)
+        .eq("user_id", usuario.id);
+
+      if (relationError) throw relationError;
+
+      const { error: categoryError } = await supabase
+        .from("categories")
+        .delete()
+        .eq("id", categoriaAEliminar.id)
+        .eq("user_id", usuario.id);
+
+      if (categoryError) throw categoryError;
+
+      setCategorias((prev) =>
+        prev.filter((item) => item.id !== categoriaAEliminar.id)
+      );
+
+      onTextoActualizado({
+        ...texto,
+        title: title.trim() || texto.title,
+        category: "Sin categoría",
+        category_id: null,
+        original_text: originalText,
+        simplified_text: simplifiedText,
+      });
+
+      setSelectedCategoryId("");
+      setNewCategoryName("");
+      setCategoriaAEliminar(null);
+      setSuccessMsg("Categoría eliminada correctamente.");
+
+      await onRecargarTextos();
+    } catch (e: any) {
+      console.error("Error eliminando categoría:", e);
+      setErrorEliminarCategoria(
+        e?.message ?? "No se pudo eliminar la categoría."
+      );
+    } finally {
+      setIsDeletingCategory(false);
+      setIsSavingData(false);
+    }
+  };
 
   const handlePegar = async () => {
     setErrorMsg("");
@@ -907,7 +1263,14 @@ function EdicionTab({
     const usuario = getUsuarioActual();
 
     if (!usuario?.id) {
-      setErrorGuardar("No se pudo identificar al usuario. Inicia sesión de nuevo.");
+      setErrorGuardar(
+        "No se pudo identificar al usuario. Inicia sesión de nuevo."
+      );
+      return;
+    }
+
+    if (estrellas < 1 || estrellas > 5) {
+      setErrorGuardar("Debe seleccionar una valoración entre 1 y 5 estrellas.");
       return;
     }
 
@@ -940,6 +1303,7 @@ function EdicionTab({
         saved_simplification_id: texto.id,
         user_id: usuario.id,
         score: estrellas,
+        comment: null,
         created_at: ahora,
       });
 
@@ -970,6 +1334,121 @@ function EdicionTab({
       <h2 className="font-lexend font-semibold text-2xl md:text-[32px] leading-[150%] text-black mb-2">
         Texto: {texto.title}
       </h2>
+
+      <section className="border border-gray-300 bg-white p-5 mb-8 rounded">
+        <h3 className="font-lexend font-semibold text-xl md:text-2xl leading-[150%] text-black mb-4">
+          Datos del texto guardado
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label
+              htmlFor="titulo-texto-guardado"
+              className="font-inter font-normal text-base text-[#1E1E1E] block mb-2"
+            >
+              Título
+            </label>
+
+            <input
+              id="titulo-texto-guardado"
+              type="text"
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setErrorMsg("");
+                setSuccessMsg("");
+              }}
+              className="w-full border border-input-border bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] outline-none focus:border-[#002855]"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="categoria-texto-guardado"
+              className="font-inter font-normal text-base text-[#1E1E1E] block mb-2"
+            >
+              Categoría
+            </label>
+
+            <select
+              id="categoria-texto-guardado"
+              value={selectedCategoryId}
+              onChange={(e) => {
+                setSelectedCategoryId(e.target.value);
+                setErrorMsg("");
+                setSuccessMsg("");
+              }}
+              className="w-full border border-input-border bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] outline-none focus:border-[#002855]"
+            >
+              <option value="">Sin categoría</option>
+
+              {categorias.map((categoria) => (
+                <option key={categoria.id} value={categoria.id}>
+                  {categoria.name}
+                </option>
+              ))}
+
+              <option value="new">Crear nueva categoría</option>
+            </select>
+          </div>
+        </div>
+
+        {selectedCategoryId === "new" && (
+          <div className="mt-4">
+            <label
+              htmlFor="nueva-categoria-texto-guardado"
+              className="font-inter font-normal text-base text-[#1E1E1E] block mb-2"
+            >
+              Nueva categoría
+            </label>
+
+            <input
+              id="nueva-categoria-texto-guardado"
+              type="text"
+              value={newCategoryName}
+              onChange={(e) => {
+                setNewCategoryName(e.target.value);
+                setErrorMsg("");
+                setSuccessMsg("");
+              }}
+              placeholder="Ejemplo: Educación, Finanzas, Salud"
+              className="w-full border border-input-border bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] outline-none focus:border-[#002855]"
+            />
+          </div>
+        )}
+
+        <div className="flex flex-wrap justify-end gap-3 mt-5">
+          <button
+            type="button"
+            onClick={quitarCategoria}
+            disabled={isSavingData || texto.category_id === null}
+            className="px-5 h-10 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Quitar categoría
+          </button>
+
+          <button
+            type="button"
+            onClick={abrirModalEliminarCategoria}
+            disabled={
+              isSavingData || !selectedCategoryId || selectedCategoryId === "new"
+            }
+            className="px-5 h-10 font-inter font-medium text-sm text-white bg-red-700 hover:bg-red-800 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Eliminar categoría
+          </button>
+
+          <button
+            type="button"
+            onClick={guardarDatosTexto}
+            disabled={isSavingData || !title.trim()}
+            className="px-5 h-10 font-inter font-medium text-sm text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ backgroundColor: "hsl(var(--navy))" }}
+          >
+            {isSavingData ? "Guardando..." : "Guardar datos"}
+          </button>
+        </div>
+      </section>
 
       <h3 className="font-lexend font-semibold text-xl md:text-2xl leading-[150%] text-black mb-2">
         Simplificador de Texto
@@ -1091,7 +1570,10 @@ function EdicionTab({
       </div>
 
       {errorMsg && (
-        <p className="text-sm text-red-600 font-inter mt-3 text-right" role="alert">
+        <p
+          className="text-sm text-red-600 font-inter mt-3 text-right"
+          role="alert"
+        >
           {errorMsg}
         </p>
       )}
@@ -1181,6 +1663,61 @@ function EdicionTab({
                 style={{ backgroundColor: "hsl(var(--navy))" }}
               >
                 {isSaving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {categoriaAEliminar && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-eliminar-categoria"
+          onClick={cerrarModalEliminarCategoria}
+        >
+          <div
+            className="bg-white w-full max-w-[500px] mx-4 p-6 shadow-lg rounded"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="titulo-eliminar-categoria"
+              className="font-inter font-semibold text-xl text-black mb-2"
+            >
+              Eliminar categoría
+            </h2>
+
+            <p className="font-inter text-sm text-[#666] mb-4">
+              ¿Seguro que quieres eliminar la categoría{" "}
+              <span className="font-semibold">{categoriaAEliminar.name}</span>?
+              Esta categoría se quitará de todos los textos que la usen. Esta
+              acción no se puede deshacer.
+            </p>
+
+            {errorEliminarCategoria && (
+              <p className="font-inter text-sm text-red-600 mb-3" role="alert">
+                {errorEliminarCategoria}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={cerrarModalEliminarCategoria}
+                disabled={isDeletingCategory}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmarEliminarCategoria}
+                disabled={isDeletingCategory}
+                className="px-6 py-2 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                {isDeletingCategory ? "Eliminando..." : "Eliminar categoría"}
               </button>
             </div>
           </div>
@@ -1541,26 +2078,50 @@ function ValoracionesTab({
   texto: TextoGuardado;
   onRegresar: () => void;
 }) {
-  const [valoraciones, setValoraciones] = useState<
-    { id: number; numero: number; fecha: string | null; score: number }[]
-  >([]);
+  type Valoracion = {
+    id: number;
+    numero: number;
+    fecha: string | null;
+    score: number;
+  };
+
+  const [valoraciones, setValoraciones] = useState<Valoracion[]>([]);
   const [cargando, setCargando] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+
+  const [valoracionAEditar, setValoracionAEditar] =
+    useState<Valoracion | null>(null);
+  const [valoracionAEliminar, setValoracionAEliminar] =
+    useState<Valoracion | null>(null);
+
+  const [editScore, setEditScore] = useState(0);
+  const [hoverScore, setHoverScore] = useState(0);
+  const [procesando, setProcesando] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
     setErrorMsg("");
+    setSuccessMsg("");
 
     try {
-      const { data, error } = await supabase
+      const usuario = getUsuarioActual();
+
+      let query = supabase
         .from("ratings")
         .select("id, score, created_at")
         .eq("saved_simplification_id", texto.id)
         .order("created_at", { ascending: true });
 
+      if (usuario?.id) {
+        query = query.eq("user_id", usuario.id);
+      }
+
+      const { data, error } = await query;
+
       if (error) throw error;
 
-      const filas = (data ?? []).map((r: any, i: number) => ({
+      const filas: Valoracion[] = (data ?? []).map((r: any, i: number) => ({
         id: r.id,
         numero: i + 1,
         fecha: r.created_at,
@@ -1585,19 +2146,147 @@ function ValoracionesTab({
     return "★".repeat(n) + "☆".repeat(5 - n);
   };
 
+  const abrirEditar = (valoracion: Valoracion) => {
+    setValoracionAEditar(valoracion);
+    setEditScore(valoracion.score);
+    setHoverScore(0);
+    setErrorMsg("");
+    setSuccessMsg("");
+  };
+
+  const cerrarEditar = () => {
+    if (procesando) return;
+
+    setValoracionAEditar(null);
+    setEditScore(0);
+    setHoverScore(0);
+  };
+
+  const confirmarEditar = async () => {
+    if (!valoracionAEditar) return;
+
+    if (editScore < 1 || editScore > 5) {
+      setErrorMsg("Debe seleccionar una valoración entre 1 y 5 estrellas.");
+      return;
+    }
+
+    try {
+      setProcesando(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      const usuario = getUsuarioActual();
+
+      let query = supabase
+        .from("ratings")
+        .update({ score: editScore })
+        .eq("id", valoracionAEditar.id);
+
+      if (usuario?.id) {
+        query = query.eq("user_id", usuario.id);
+      }
+
+      const { error } = await query;
+
+      if (error) throw error;
+
+      setValoraciones((prev) =>
+        prev.map((item) =>
+          item.id === valoracionAEditar.id
+            ? {
+                ...item,
+                score: editScore,
+              }
+            : item
+        )
+      );
+
+      setValoracionAEditar(null);
+      setEditScore(0);
+      setHoverScore(0);
+      setSuccessMsg("Valoración actualizada correctamente.");
+    } catch (e: any) {
+      console.error("Error actualizando valoración:", e);
+      setErrorMsg(e?.message ?? "No se pudo actualizar la valoración.");
+    } finally {
+      setProcesando(false);
+    }
+  };
+
+  const abrirEliminar = (valoracion: Valoracion) => {
+    setValoracionAEliminar(valoracion);
+    setErrorMsg("");
+    setSuccessMsg("");
+  };
+
+  const cerrarEliminar = () => {
+    if (procesando) return;
+    setValoracionAEliminar(null);
+  };
+
+  const confirmarEliminar = async () => {
+    if (!valoracionAEliminar) return;
+
+    try {
+      setProcesando(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      const usuario = getUsuarioActual();
+
+      let query = supabase
+        .from("ratings")
+        .delete()
+        .eq("id", valoracionAEliminar.id);
+
+      if (usuario?.id) {
+        query = query.eq("user_id", usuario.id);
+      }
+
+      const { error } = await query;
+
+      if (error) throw error;
+
+      setValoraciones((prev) =>
+        prev
+          .filter((item) => item.id !== valoracionAEliminar.id)
+          .map((item, index) => ({
+            ...item,
+            numero: index + 1,
+          }))
+      );
+
+      setValoracionAEliminar(null);
+      setSuccessMsg("Valoración eliminada correctamente.");
+    } catch (e: any) {
+      console.error("Error eliminando valoración:", e);
+      setErrorMsg(e?.message ?? "No se pudo eliminar la valoración.");
+    } finally {
+      setProcesando(false);
+    }
+  };
+
   return (
     <div>
       <h2 className="font-lexend font-semibold text-2xl md:text-[32px] leading-[150%] text-black mb-12">
         Texto: {texto.title}
       </h2>
 
+      {errorMsg && (
+        <p className="font-inter text-base text-red-600 mb-4" role="alert">
+          {errorMsg}
+        </p>
+      )}
+
+      {successMsg && (
+        <p className="font-inter text-base text-green-600 mb-4" role="status">
+          {successMsg}
+        </p>
+      )}
+
       {cargando ? (
         <p className="font-inter text-base text-[#666]">
           Cargando valoraciones...
-        </p>
-      ) : errorMsg ? (
-        <p className="font-inter text-base text-red-600" role="alert">
-          {errorMsg}
         </p>
       ) : valoraciones.length === 0 ? (
         <p className="font-inter text-base text-[#666]">
@@ -1614,11 +2303,17 @@ function ValoracionesTab({
               <th scope="col" className="py-3 font-medium">
                 Título
               </th>
+
               <th scope="col" className="py-3 font-medium">
                 Fecha
               </th>
+
               <th scope="col" className="py-3 font-medium text-center">
                 Valoración
+              </th>
+
+              <th scope="col" className="py-3 font-medium text-center">
+                Acciones
               </th>
             </tr>
           </thead>
@@ -1626,13 +2321,36 @@ function ValoracionesTab({
           <tbody>
             {valoraciones.map((item) => (
               <tr key={item.id} className="border-b border-gray-300">
-                <td className="py-3">Versión {item.numero}</td>
+                <td className="py-3">Valoración {item.numero}</td>
+
                 <td className="py-3">{formatearFecha(item.fecha)}</td>
+
                 <td
                   className="py-3 text-center tracking-[2px]"
                   aria-label={`${item.score} de 5 estrellas`}
                 >
                   {estrellas(item.score)}
+                </td>
+
+                <td className="py-3">
+                  <div className="flex justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => abrirEditar(item)}
+                      className="text-white font-inter font-medium text-sm px-4 h-9 rounded transition-colors"
+                      style={{ backgroundColor: "hsl(var(--navy))" }}
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => abrirEliminar(item)}
+                      className="text-white font-inter font-medium text-sm px-4 h-9 rounded bg-red-600 hover:bg-red-700 transition-colors"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1650,6 +2368,127 @@ function ValoracionesTab({
           Regresar
         </button>
       </div>
+
+      {valoracionAEditar && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-editar-valoracion"
+          onClick={cerrarEditar}
+        >
+          <div
+            className="bg-white w-full max-w-[500px] mx-4 p-6 shadow-lg rounded"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="titulo-editar-valoracion"
+              className="font-inter font-semibold text-xl text-black mb-2"
+            >
+              Editar valoración
+            </h2>
+
+            <p className="font-inter text-sm text-[#666] mb-5">
+              Modifica la puntuación de esta valoración.
+            </p>
+
+            <fieldset>
+              <legend className="font-inter text-base text-[#1E1E1E] mb-2">
+                Valoración
+              </legend>
+
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setEditScore(n)}
+                    onMouseEnter={() => setHoverScore(n)}
+                    onMouseLeave={() => setHoverScore(0)}
+                    aria-label={`${n} estrella${n > 1 ? "s" : ""}`}
+                    aria-pressed={editScore === n}
+                    className="text-3xl leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                    style={{
+                      color:
+                        n <= (hoverScore || editScore) ? "#f5b301" : "#cbd5e1",
+                    }}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={cerrarEditar}
+                disabled={procesando}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmarEditar}
+                disabled={procesando || editScore < 1}
+                className="px-6 py-2 font-inter font-medium text-sm text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+                style={{ backgroundColor: "hsl(var(--navy))" }}
+              >
+                {procesando ? "Guardando..." : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {valoracionAEliminar && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-eliminar-valoracion"
+          onClick={cerrarEliminar}
+        >
+          <div
+            className="bg-white w-full max-w-[460px] mx-4 p-6 shadow-lg rounded"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="titulo-eliminar-valoracion"
+              className="font-inter font-semibold text-xl text-black mb-2"
+            >
+              Eliminar valoración
+            </h2>
+
+            <p className="font-inter text-sm text-[#666]">
+              ¿Seguro que deseas eliminar esta valoración? Esta acción no se
+              puede deshacer.
+            </p>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={cerrarEliminar}
+                disabled={procesando}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmarEliminar}
+                disabled={procesando}
+                className="px-6 py-2 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                {procesando ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <BotonAyuda modulo="Textos guardados" />
     </div>
