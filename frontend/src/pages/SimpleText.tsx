@@ -22,6 +22,7 @@ interface Anuncio {
 interface Categoria {
   id: number;
   name: string;
+  user_id?: number;
 }
 
 interface WordEntry {
@@ -40,9 +41,7 @@ const formatearFecha = (iso: string) => {
 };
 
 const limpiarPalabraSeleccionada = (texto: string) => {
-  return texto
-    .trim()
-    .replace(/[.,;:!?¿¡()"']/g, "");
+  return texto.trim().replace(/[.,;:!?¿¡()"']/g, "");
 };
 
 const escapeRegex = (texto: string): string => {
@@ -130,7 +129,43 @@ async function insertarFila(
   throw new Error(`No se pudo generar un id único para ${tabla}.`);
 }
 
-export default function Index() {
+async function insertarFilaConRetorno<T = any>(
+  tabla: string,
+  fila: Record<string, unknown>,
+  intentos = 5
+): Promise<T> {
+  const primer = await supabase.from(tabla).insert(fila).select("*").single();
+
+  if (!primer.error && primer.data) {
+    return primer.data as T;
+  }
+
+  if (primer.error?.code !== "23502") {
+    throw primer.error;
+  }
+
+  for (let i = 0; i < intentos; i++) {
+    const id = await siguienteId(tabla);
+
+    const { data, error } = await supabase
+      .from(tabla)
+      .insert({ ...fila, id })
+      .select("*")
+      .single();
+
+    if (!error && data) {
+      return data as T;
+    }
+
+    if (error?.code !== "23505") {
+      throw error;
+    }
+  }
+
+  throw new Error(`No se pudo generar un id único para ${tabla}.`);
+}
+
+export default function SimpleText() {
   const [inputText, setInputText] = useState("");
   const [simplifiedText, setSimplifiedText] = useState("");
   const [isSimplifying, setIsSimplifying] = useState(false);
@@ -189,14 +224,34 @@ export default function Index() {
     };
 
     const cargarCategorias = async () => {
+      const usuarioGuardado = localStorage.getItem("usuario");
+      const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
+
+      if (!usuario?.id) {
+        setCategorias([]);
+        return;
+      }
+
+      const userId = Number(usuario.id);
+
+      if (Number.isNaN(userId)) {
+        setCategorias([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("categories")
-        .select("id, name")
+        .select("id, name, user_id")
+        .eq("user_id", userId)
         .order("name", { ascending: true });
 
-      if (!error) {
-        setCategorias(data ?? []);
+      if (error) {
+        console.error("Error cargando categorías:", error);
+        setCategorias([]);
+        return;
       }
+
+      setCategorias(data ?? []);
     };
 
     const cargarLimite = async () => {
@@ -218,6 +273,8 @@ export default function Index() {
     async (userId: number): Promise<number> => {
       if (lastSimplificationId) return lastSimplificationId;
 
+      const ahora = new Date().toISOString();
+
       const { data, error } = await supabase
         .from("simplifications")
         .insert([
@@ -226,6 +283,8 @@ export default function Index() {
             original_text: inputText,
             simplified_text: simplifiedText,
             status: "completed",
+            created_at: ahora,
+            updated_at: ahora,
           },
         ])
         .select("id")
@@ -355,7 +414,10 @@ export default function Index() {
       const usuario = usuarioGuardado ? JSON.parse(usuarioGuardado) : null;
 
       if (usuario?.id) {
-        const diccionarioPersonal = await obtenerDiccionarioPersonal(usuario.id);
+        const diccionarioPersonal = await obtenerDiccionarioPersonal(
+          Number(usuario.id)
+        );
+
         finalSimplifiedText = aplicarDiccionarioPersonal(
           finalSimplifiedText,
           diccionarioPersonal
@@ -365,14 +427,19 @@ export default function Index() {
       setSimplifiedText(finalSimplifiedText);
 
       if (usuario?.id) {
+        const userId = Number(usuario.id);
+        const ahora = new Date().toISOString();
+
         const { data, error } = await supabase
           .from("simplifications")
           .insert([
             {
-              user_id: usuario.id,
+              user_id: userId,
               original_text: result.originalText,
               simplified_text: finalSimplifiedText,
               status: "completed",
+              created_at: ahora,
+              updated_at: ahora,
             },
           ])
           .select("id")
@@ -483,27 +550,34 @@ export default function Index() {
       return;
     }
 
+    const userId = Number(usuario.id);
+
+    if (Number.isNaN(userId)) {
+      setSaveError("El ID del usuario no es válido.");
+      return;
+    }
+
     try {
       setIsSaving(true);
       setSaveError("");
       setErrorMessage("");
       setSuccessMessage("");
 
-      const simplificationId = await obtenerOCrearSimplificationId(usuario.id);
+      const ahora = new Date().toISOString();
+      const simplificationId = await obtenerOCrearSimplificationId(userId);
 
-      const { data: savedData, error: savedError } = await supabase
-        .from("saved_simplifications")
-        .insert([
-          {
-            user_id: usuario.id,
-            simplification_id: simplificationId,
-            title: saveTitle.trim(),
-          },
-        ])
-        .select("id")
-        .single();
-
-      if (savedError) throw savedError;
+      const savedData = await insertarFilaConRetorno<{
+        id: number;
+        user_id: number;
+        simplification_id: number;
+        title: string;
+        created_at: string;
+      }>("saved_simplifications", {
+        user_id: userId,
+        simplification_id: simplificationId,
+        title: saveTitle.trim(),
+        created_at: ahora,
+      });
 
       let categoryId: number;
 
@@ -512,8 +586,9 @@ export default function Index() {
 
         const { data: existingCategories, error: searchError } = await supabase
           .from("categories")
-          .select("id")
-          .eq("name", nombreCategoria)
+          .select("id, name, user_id")
+          .eq("user_id", userId)
+          .ilike("name", nombreCategoria)
           .limit(1);
 
         if (searchError) throw searchError;
@@ -521,17 +596,16 @@ export default function Index() {
         if (existingCategories && existingCategories.length > 0) {
           categoryId = existingCategories[0].id;
         } else {
-          const { data: newCategory, error: categoryError } = await supabase
-            .from("categories")
-            .insert([
-              {
-                name: nombreCategoria,
-              },
-            ])
-            .select("id, name")
-            .single();
-
-          if (categoryError) throw categoryError;
+          const newCategory = await insertarFilaConRetorno<{
+            id: number;
+            name: string;
+            user_id: number;
+            created_at: string;
+          }>("categories", {
+            name: nombreCategoria,
+            user_id: userId,
+            created_at: ahora,
+          });
 
           categoryId = newCategory.id;
 
@@ -543,18 +617,26 @@ export default function Index() {
         }
       } else {
         categoryId = Number(selectedCategoryId);
+
+        if (Number.isNaN(categoryId)) {
+          setSaveError("La categoría seleccionada no es válida.");
+          return;
+        }
       }
 
       await insertarFila("simplification_categories", {
         saved_simplification_id: savedData.id,
         category_id: categoryId,
+        user_id: userId,
+        created_at: ahora,
       });
 
       await insertarFila("ratings", {
         saved_simplification_id: savedData.id,
-        user_id: usuario.id,
+        user_id: userId,
         score: rating,
         comment: null,
+        created_at: ahora,
       });
 
       setIsSaveModalOpen(false);
@@ -564,8 +646,15 @@ export default function Index() {
       setRating(0);
       setSaveError("");
       setSuccessMessage("Simplificación guardada correctamente.");
-    } catch {
-      setSaveError("No se pudo guardar la simplificación.");
+    } catch (error: any) {
+      console.error("Error guardando simplificación:", error);
+
+      setSaveError(
+        error?.message ||
+          error?.details ||
+          error?.hint ||
+          "No se pudo guardar la simplificación."
+      );
     } finally {
       setIsSaving(false);
     }
@@ -618,10 +707,11 @@ export default function Index() {
       setErrorMessage("");
       setSuccessMessage("");
 
-      const simplificationId = await obtenerOCrearSimplificationId(usuario.id);
+      const userId = Number(usuario.id);
+      const simplificationId = await obtenerOCrearSimplificationId(userId);
 
       await insertarFila(REPORT_TABLE, {
-        user_id: usuario.id,
+        user_id: userId,
         simplification_id: simplificationId,
         description: reportDescription.trim(),
         status: "pending",
@@ -660,7 +750,8 @@ export default function Index() {
       setErrorMessage("");
       setSuccessMessage("");
 
-      const simplificationId = await obtenerOCrearSimplificationId(usuario.id);
+      const userId = Number(usuario.id);
+      const simplificationId = await obtenerOCrearSimplificationId(userId);
 
       const ahora = new Date().toISOString();
 
