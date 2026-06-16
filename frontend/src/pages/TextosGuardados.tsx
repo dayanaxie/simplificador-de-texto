@@ -559,6 +559,7 @@ export default function TextosGuardados() {
                 onRegresar={regresar}
                 onTextoActualizado={actualizarTextoLocal}
                 onExportarTexto={exportarTextoGuardado}
+                onRecargarTextos={cargarTextos}
               />
             )}
 
@@ -827,11 +828,13 @@ function EdicionTab({
   onRegresar,
   onTextoActualizado,
   onExportarTexto,
+  onRecargarTextos,
 }: {
   texto: TextoGuardado;
   onRegresar: () => void;
   onTextoActualizado: (texto: TextoGuardado) => void;
   onExportarTexto: (texto: TextoGuardado) => Promise<void>;
+  onRecargarTextos: () => Promise<void>;
 }) {
   const [originalText, setOriginalText] = useState(texto.original_text);
   const [simplifiedText, setSimplifiedText] = useState(texto.simplified_text);
@@ -854,6 +857,12 @@ function EdicionTab({
   );
   const [newCategoryName, setNewCategoryName] = useState("");
   const [isSavingData, setIsSavingData] = useState(false);
+  const [categoriaAEliminar, setCategoriaAEliminar] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const [isDeletingCategory, setIsDeletingCategory] = useState(false);
+  const [errorEliminarCategoria, setErrorEliminarCategoria] = useState("");
 
   const originalRef = useRef<HTMLTextAreaElement | null>(null);
   const wordCount = countWords(originalText);
@@ -1079,6 +1088,106 @@ function EdicionTab({
       setErrorMsg(e?.message ?? "No se pudo quitar la categoría.");
       setSuccessMsg("");
     } finally {
+      setIsSavingData(false);
+    }
+  };
+
+  const abrirModalEliminarCategoria = () => {
+    setErrorMsg("");
+    setSuccessMsg("");
+    setErrorEliminarCategoria("");
+
+    if (!selectedCategoryId || selectedCategoryId === "new") {
+      setErrorMsg("Debe seleccionar una categoría existente para eliminar.");
+      return;
+    }
+
+    const categoryId = Number(selectedCategoryId);
+
+    if (Number.isNaN(categoryId)) {
+      setErrorMsg("La categoría seleccionada no es válida.");
+      return;
+    }
+
+    const categoria = categorias.find((item) => item.id === categoryId);
+
+    if (!categoria) {
+      setErrorMsg("No se encontró la categoría seleccionada.");
+      return;
+    }
+
+    setCategoriaAEliminar({
+      id: categoria.id,
+      name: categoria.name,
+    });
+  };
+
+  const cerrarModalEliminarCategoria = () => {
+    if (isDeletingCategory) return;
+
+    setCategoriaAEliminar(null);
+    setErrorEliminarCategoria("");
+  };
+
+  const confirmarEliminarCategoria = async () => {
+    const usuario = getUsuarioActual();
+
+    if (!usuario?.id) {
+      setErrorEliminarCategoria("No se encontró el usuario activo.");
+      return;
+    }
+
+    if (!categoriaAEliminar) return;
+
+    try {
+      setIsDeletingCategory(true);
+      setIsSavingData(true);
+      setErrorMsg("");
+      setSuccessMsg("");
+      setErrorEliminarCategoria("");
+
+      const { error: relationError } = await supabase
+        .from("simplification_categories")
+        .delete()
+        .eq("category_id", categoriaAEliminar.id)
+        .eq("user_id", usuario.id);
+
+      if (relationError) throw relationError;
+
+      const { error: categoryError } = await supabase
+        .from("categories")
+        .delete()
+        .eq("id", categoriaAEliminar.id)
+        .eq("user_id", usuario.id);
+
+      if (categoryError) throw categoryError;
+
+      setCategorias((prev) =>
+        prev.filter((item) => item.id !== categoriaAEliminar.id)
+      );
+
+      onTextoActualizado({
+        ...texto,
+        title: title.trim() || texto.title,
+        category: "Sin categoría",
+        category_id: null,
+        original_text: originalText,
+        simplified_text: simplifiedText,
+      });
+
+      setSelectedCategoryId("");
+      setNewCategoryName("");
+      setCategoriaAEliminar(null);
+      setSuccessMsg("Categoría eliminada correctamente.");
+
+      await onRecargarTextos();
+    } catch (e: any) {
+      console.error("Error eliminando categoría:", e);
+      setErrorEliminarCategoria(
+        e?.message ?? "No se pudo eliminar la categoría."
+      );
+    } finally {
+      setIsDeletingCategory(false);
       setIsSavingData(false);
     }
   };
@@ -1347,6 +1456,17 @@ function EdicionTab({
 
           <button
             type="button"
+            onClick={abrirModalEliminarCategoria}
+            disabled={
+              isSavingData || !selectedCategoryId || selectedCategoryId === "new"
+            }
+            className="px-5 h-10 font-inter font-medium text-sm text-white bg-red-700 hover:bg-red-800 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Eliminar categoría
+          </button>
+
+          <button
+            type="button"
             onClick={guardarDatosTexto}
             disabled={isSavingData || !title.trim()}
             className="px-5 h-10 font-inter font-medium text-sm text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1570,6 +1690,61 @@ function EdicionTab({
                 style={{ backgroundColor: "hsl(var(--navy))" }}
               >
                 {isSaving ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {categoriaAEliminar && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-eliminar-categoria"
+          onClick={cerrarModalEliminarCategoria}
+        >
+          <div
+            className="bg-white w-full max-w-[500px] mx-4 p-6 shadow-lg rounded"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="titulo-eliminar-categoria"
+              className="font-inter font-semibold text-xl text-black mb-2"
+            >
+              Eliminar categoría
+            </h2>
+
+            <p className="font-inter text-sm text-[#666] mb-4">
+              ¿Seguro que quieres eliminar la categoría{" "}
+              <span className="font-semibold">{categoriaAEliminar.name}</span>?
+              Esta categoría se quitará de todos los textos que la usen. Esta
+              acción no se puede deshacer.
+            </p>
+
+            {errorEliminarCategoria && (
+              <p className="font-inter text-sm text-red-600 mb-3" role="alert">
+                {errorEliminarCategoria}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={cerrarModalEliminarCategoria}
+                disabled={isDeletingCategory}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmarEliminarCategoria}
+                disabled={isDeletingCategory}
+                className="px-6 py-2 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                {isDeletingCategory ? "Eliminando..." : "Eliminar categoría"}
               </button>
             </div>
           </div>
