@@ -131,6 +131,35 @@ async function insertarFila(
   throw new Error(`No se pudo generar un id único para ${tabla}.`);
 }
 
+async function insertarFilaYRetornar<T>(
+  tabla: string,
+  fila: Record<string, unknown>,
+  select = "*",
+  intentos = 5
+): Promise<T> {
+  const primer = await supabase.from(tabla).insert(fila).select(select).single();
+
+  if (!primer.error) return primer.data as T;
+
+  if (primer.error.code !== "23502") throw primer.error;
+
+  for (let i = 0; i < intentos; i++) {
+    const id = await siguienteId(tabla);
+
+    const { data, error } = await supabase
+      .from(tabla)
+      .insert({ ...fila, id })
+      .select(select)
+      .single();
+
+    if (!error) return data as T;
+
+    if (error.code !== "23505") throw error;
+  }
+
+  throw new Error(`No se pudo generar un id único para ${tabla}.`);
+}
+
 export default function TextosGuardados() {
   const [activeTab, setActiveTab] = useState<TextosTab>("guardados");
   const [textos, setTextos] = useState<TextoGuardado[]>([]);
@@ -360,9 +389,7 @@ export default function TextosGuardados() {
           };
 
           setTextos((prev) =>
-            prev.map((item) =>
-              item.id === texto.id ? textoActualizado : item
-            )
+            prev.map((item) => (item.id === texto.id ? textoActualizado : item))
           );
 
           if (selectedTexto?.id === texto.id) {
@@ -1570,11 +1597,21 @@ function HistorialTab({
     content: string;
   };
 
+  type VersionDB = {
+    id: number;
+    content: string | null;
+    created_at: string | null;
+  };
+
   const [versiones, setVersiones] = useState<Version[]>([]);
   const [cargando, setCargando] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   const [versionAVer, setVersionAVer] = useState<Version | null>(null);
+  const [versionAEditar, setVersionAEditar] = useState<Version | null>(null);
+  const [contenidoEditado, setContenidoEditado] = useState("");
+
   const [accion, setAccion] = useState<{
     tipo: "restaurar" | "eliminar";
     version: Version;
@@ -1586,6 +1623,7 @@ function HistorialTab({
   const cargar = useCallback(async () => {
     setCargando(true);
     setErrorMsg("");
+    setSuccessMsg("");
 
     try {
       const { data, error } = await supabase
@@ -1596,21 +1634,28 @@ function HistorialTab({
 
       if (error) throw error;
 
-      const filas: Version[] = (data ?? []).map((v: any, i: number) => ({
+      let filasBD = (data ?? []) as VersionDB[];
+
+      if (filasBD.length === 0 && (texto.simplified_text ?? "").trim() !== "") {
+        const versionInicial = await insertarFilaYRetornar<VersionDB>(
+          "simplification_versions",
+          {
+            saved_simplification_id: texto.id,
+            content: texto.simplified_text,
+            created_at: texto.created_at ?? new Date().toISOString(),
+          },
+          "id, content, created_at"
+        );
+
+        filasBD = [versionInicial];
+      }
+
+      const filas: Version[] = filasBD.map((v: VersionDB, i: number) => ({
         id: v.id,
         numero: i + 1,
         creacion: v.created_at,
         content: v.content ?? "",
       }));
-
-      if (filas.length === 0 && (texto.simplified_text ?? "").trim() !== "") {
-        filas.push({
-          id: -1,
-          numero: 1,
-          creacion: texto.created_at,
-          content: texto.simplified_text,
-        });
-      }
 
       setVersiones(filas);
     } catch (e: any) {
@@ -1625,6 +1670,87 @@ function HistorialTab({
     cargar();
   }, [cargar]);
 
+  const crearNuevaVersionYActualizarTexto = async (contenido: string) => {
+    const contenidoLimpio = contenido.trim();
+
+    if (!contenidoLimpio) {
+      throw new Error("La versión no puede quedar vacía.");
+    }
+
+    const ahora = new Date().toISOString();
+
+    await insertarFila("simplification_versions", {
+      saved_simplification_id: texto.id,
+      content: contenidoLimpio,
+      created_at: ahora,
+    });
+
+    if (texto.simplification_id != null) {
+      const { error: updateError } = await supabase
+        .from("simplifications")
+        .update({
+          simplified_text: contenidoLimpio,
+          updated_at: ahora,
+        })
+        .eq("id", texto.simplification_id);
+
+      if (updateError) throw updateError;
+    }
+
+    onTextoActualizado({
+      ...texto,
+      simplified_text: contenidoLimpio,
+      simplification_updated_at: ahora,
+    });
+  };
+
+  const abrirEditarVersion = (version: Version) => {
+    setVersionAEditar(version);
+    setContenidoEditado(version.content);
+    setErrorAccion("");
+    setErrorMsg("");
+    setSuccessMsg("");
+  };
+
+  const cerrarEditarVersion = () => {
+    if (procesando) return;
+
+    setVersionAEditar(null);
+    setContenidoEditado("");
+    setErrorAccion("");
+  };
+
+  const confirmarEditarVersion = async () => {
+    if (!versionAEditar) return;
+
+    if (!contenidoEditado.trim()) {
+      setErrorAccion("El contenido de la versión no puede estar vacío.");
+      return;
+    }
+
+    try {
+      setProcesando(true);
+      setErrorAccion("");
+      setErrorMsg("");
+      setSuccessMsg("");
+
+      await crearNuevaVersionYActualizarTexto(contenidoEditado);
+
+      setVersionAEditar(null);
+      setContenidoEditado("");
+      setSuccessMsg(
+        `Se creó una nueva versión a partir de la Versión ${versionAEditar.numero}.`
+      );
+
+      await cargar();
+    } catch (e: any) {
+      console.error("Error editando versión:", e);
+      setErrorAccion(e?.message ?? "No se pudo guardar la versión editada.");
+    } finally {
+      setProcesando(false);
+    }
+  };
+
   const confirmarAccion = async () => {
     if (!accion) return;
 
@@ -1633,35 +1759,25 @@ function HistorialTab({
     try {
       setProcesando(true);
       setErrorAccion("");
+      setErrorMsg("");
+      setSuccessMsg("");
 
       if (tipo === "eliminar") {
         const { error } = await supabase
           .from("simplification_versions")
           .delete()
-          .eq("id", version.id);
+          .eq("id", version.id)
+          .eq("saved_simplification_id", texto.id);
 
         if (error) throw error;
+
+        setSuccessMsg(`La Versión ${version.numero} fue eliminada correctamente.`);
       } else {
-        const ahora = new Date().toISOString();
+        await crearNuevaVersionYActualizarTexto(version.content);
 
-        await insertarFila("simplification_versions", {
-          saved_simplification_id: texto.id,
-          content: version.content,
-          created_at: ahora,
-        });
-
-        if (texto.simplification_id != null) {
-          await supabase
-            .from("simplifications")
-            .update({ simplified_text: version.content, updated_at: ahora })
-            .eq("id", texto.simplification_id);
-        }
-
-        onTextoActualizado({
-          ...texto,
-          simplified_text: version.content,
-          simplification_updated_at: ahora,
-        });
+        setSuccessMsg(
+          `Se restauró la Versión ${version.numero}. Se creó una nueva versión con ese contenido.`
+        );
       }
 
       setAccion(null);
@@ -1680,12 +1796,20 @@ function HistorialTab({
         Texto: {texto.title}
       </h2>
 
-      {cargando ? (
-        <p className="font-inter text-base text-[#666]">Cargando historial...</p>
-      ) : errorMsg ? (
-        <p className="font-inter text-base text-red-600" role="alert">
+      {errorMsg && (
+        <p className="font-inter text-base text-red-600 mb-4" role="alert">
           {errorMsg}
         </p>
+      )}
+
+      {successMsg && (
+        <p className="font-inter text-base text-green-700 mb-4" role="status">
+          {successMsg}
+        </p>
+      )}
+
+      {cargando ? (
+        <p className="font-inter text-base text-[#666]">Cargando historial...</p>
       ) : versiones.length === 0 ? (
         <p className="font-inter text-base text-[#666]">
           Este texto todavía no tiene versiones.
@@ -1732,34 +1856,40 @@ function HistorialTab({
                       Ver
                     </button>
 
-                    {item.id !== -1 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setErrorAccion("");
-                            setAccion({ tipo: "restaurar", version: item });
-                          }}
-                          className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
-                          style={{ backgroundColor: "hsl(var(--navy))" }}
-                          aria-label={`Restaurar la Versión ${item.numero}`}
-                        >
-                          Restaurar
-                        </button>
+                    <button
+                      type="button"
+                      onClick={() => abrirEditarVersion(item)}
+                      className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                      style={{ backgroundColor: "hsl(var(--navy))" }}
+                      aria-label={`Editar la Versión ${item.numero}`}
+                    >
+                      Editar
+                    </button>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setErrorAccion("");
-                            setAccion({ tipo: "eliminar", version: item });
-                          }}
-                          className="px-3 h-9 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
-                          aria-label={`Eliminar la Versión ${item.numero}`}
-                        >
-                          Eliminar
-                        </button>
-                      </>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorAccion("");
+                        setAccion({ tipo: "restaurar", version: item });
+                      }}
+                      className="px-3 h-9 font-inter font-medium text-sm text-white rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#002855]"
+                      style={{ backgroundColor: "hsl(var(--navy))" }}
+                      aria-label={`Restaurar la Versión ${item.numero}`}
+                    >
+                      Restaurar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorAccion("");
+                        setAccion({ tipo: "eliminar", version: item });
+                      }}
+                      className="px-3 h-9 font-inter font-medium text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
+                      aria-label={`Eliminar la Versión ${item.numero}`}
+                    >
+                      Eliminar
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1822,6 +1952,77 @@ function HistorialTab({
         </div>
       )}
 
+      {versionAEditar && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-editar-version"
+          onClick={cerrarEditarVersion}
+        >
+          <div
+            className="bg-white w-full max-w-[680px] mx-4 p-6 shadow-lg rounded"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="titulo-editar-version"
+              className="font-inter font-semibold text-xl text-black mb-1"
+            >
+              Editar Versión {versionAEditar.numero}
+            </h2>
+
+            <p className="font-inter font-normal text-sm text-[#666] mb-4">
+              Al guardar, se creará una nueva versión. La versión original no se
+              sobrescribirá.
+            </p>
+
+            <label
+              htmlFor="contenido-version-editada"
+              className="font-inter font-normal text-base text-[#1E1E1E] block mb-2"
+            >
+              Contenido de la versión
+            </label>
+
+            <textarea
+              id="contenido-version-editada"
+              value={contenidoEditado}
+              onChange={(e) => {
+                setContenidoEditado(e.target.value);
+                setErrorAccion("");
+              }}
+              className="w-full h-[260px] border border-input-border bg-white px-4 py-3 font-inter text-base text-[#1E1E1E] leading-[140%] outline-none resize-y focus:border-[#002855]"
+            />
+
+            {errorAccion && (
+              <p className="font-inter text-sm text-red-600 mt-3" role="alert">
+                {errorAccion}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={cerrarEditarVersion}
+                disabled={procesando}
+                className="px-6 py-2 font-inter font-normal text-sm text-[#1E1E1E] border border-[#D9D9D9] bg-white hover:bg-[#F5F5F5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmarEditarVersion}
+                disabled={procesando || !contenidoEditado.trim()}
+                className="px-6 py-2 font-inter font-medium text-sm text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded"
+                style={{ backgroundColor: "hsl(var(--navy))" }}
+              >
+                {procesando ? "Guardando..." : "Guardar como nueva versión"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {accion && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -1847,7 +2048,7 @@ function HistorialTab({
 
             <p className="font-inter font-normal text-base text-[#1E1E1E] mb-5">
               {accion.tipo === "restaurar"
-                ? `Se creará una versión nueva con el contenido de la Versión ${accion.version.numero}. El historial actual no se borra.`
+                ? `Se creará una nueva versión con el contenido de la Versión ${accion.version.numero}. El historial actual no se borra.`
                 : `¿Seguro que quieres eliminar la Versión ${accion.version.numero}? Esta acción no se puede deshacer.`}
             </p>
 
@@ -2319,4 +2520,3 @@ function ValoracionesTab({
     </div>
   );
 }
-
